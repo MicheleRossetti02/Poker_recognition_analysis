@@ -17,7 +17,7 @@ import traceback
 from typing import Dict, Any, Optional
 
 from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QThread, pyqtSignal, QTimer
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QMutex, QMutexLocker
 
 # Import moduli locali
 from screen_capture import ScreenRecorder, RETINA_SCALE
@@ -102,8 +102,15 @@ class VisionWorker(QThread):
         self.yolo_model_path = yolo_model_path
         self.frame_interval_ms = frame_interval_ms
         
+        # Thread-safe flags with mutex protection
+        self._mutex = QMutex()
         self._running = True
         self._paused = False
+        
+        # Adaptive frame rate tracking
+        self._last_pot_size = 0.0
+        self._last_pot_change_time = time.time()
+        self._idle_threshold_seconds = 2.0  # Reduce FPS after 2s idle
         
         # Componenti (inizializzati nel thread)
         self.recorder: Optional[ScreenRecorder] = None
@@ -116,9 +123,15 @@ class VisionWorker(QThread):
             # Inizializza componenti nel thread
             self._initialize_components()
             
-            # Loop principale
-            while self._running:
-                if self._paused:
+            # Loop principale (thread-safe con mutex)
+            while True:
+                # Check running flag atomically
+                with QMutexLocker(self._mutex):
+                    if not self._running:
+                        break
+                    is_paused = self._paused
+                
+                if is_paused:
                     time.sleep(0.1)
                     continue
                 
@@ -137,8 +150,9 @@ class VisionWorker(QThread):
                         # Piccola pausa per evitare loop infinito di errori
                         time.sleep(0.5)
                 
-                # Intervallo tra frame
-                time.sleep(self.frame_interval_ms / 1000.0)
+                # Intervallo tra frame (adattivo basato su attività pot)
+                interval = self._get_adaptive_interval()
+                time.sleep(interval / 1000.0)
         
         except Exception as e:
             self.status_update.emit(f"Critical error: {str(e)}", True)
@@ -206,8 +220,11 @@ class VisionWorker(QThread):
         # 1. Cattura frame
         frame = self.recorder.grab_frame(color_format="BGR")
         
-        # 2. Analizza carte (YOLO)
+        # 2. Analizza carte (YOLO) + Position + Button
         cards_data = {"my_hand": [], "board": [], "game_stage": "Unknown"}
+        hero_position = "Unknown"
+        button_detected = False
+        
         if self.brain:
             try:
                 cards_result = self.brain.analyze_frame(frame, draw_boxes=False)
@@ -216,6 +233,8 @@ class VisionWorker(QThread):
                     "board": cards_result.get("board", []),
                     "game_stage": cards_result.get("game_stage", "Unknown")
                 }
+                hero_position = cards_result.get("hero_position", "Unknown")
+                button_detected = cards_result.get("button_detected", False)
             except Exception:
                 pass  # Ignora errori YOLO
         
@@ -227,19 +246,41 @@ class VisionWorker(QThread):
             except Exception:
                 pass  # Ignora errori OCR
         
-        # 4. Calcola equity (placeholder - dummy)
-        equity = self._calculate_equity_dummy(
-            cards_data.get("my_hand", []),
-            cards_data.get("board", [])
-        )
+        # 4. Calcola Hand Evaluation (Treys)
+        equity = None
+        hand_description = "--"
+        hand_rank = 0
         
-        # 5. Combina tutto
+        my_hand = cards_data.get("my_hand", [])
+        board = cards_data.get("board", [])
+        
+        if self.brain and len(my_hand) == 2 and len(board) >= 3:
+            try:
+                eval_result = self.brain.calculate_equity(my_hand, board)
+                if eval_result.get("valid", False):
+                    hand_description = eval_result.get("description", "--")
+                    hand_rank = eval_result.get("rank", 0)
+                    # Usa percentile come equity
+                    equity = eval_result.get("percentile", None)
+            except Exception:
+                pass  # Valutazione non disponibile
+        
+        # 5. Update adaptive frame rate tracking
+        if game_state.pot_changed or game_state.pot_size != self._last_pot_size:
+            self._last_pot_change_time = time.time()
+            self._last_pot_size = game_state.pot_size
+        
+        # 6. Combina tutto
         result = {
             "cards": cards_data,
             "pot_size": game_state.pot_size,
             "hero_stack": game_state.hero_stack,
             "action_detected": game_state.action_detected,
             "pot_changed": game_state.pot_changed,
+            "hero_position": hero_position,
+            "button_detected": button_detected,
+            "hand_description": hand_description,
+            "hand_rank": hand_rank,
             "equity": equity
         }
         
@@ -312,17 +353,53 @@ class VisionWorker(QThread):
             # Fallback random
             return random.uniform(40, 60)
     
+    def _get_adaptive_interval(self) -> float:
+        """
+        Calcola intervallo adattivo con jitter anti-detection.
+        
+        LOGICA:
+        - Pot cambiato recentemente (<2s): frame_interval_ms (10 FPS) - max responsiveness
+        - Pot fermo (>2s): frame_interval_ms * 5 (2 FPS) - risparmio CPU ~60%
+        - JITTER: ±10% randomness per mimare varianza umana (anti-pattern detection)
+        
+        Returns:
+            Intervallo in millisecondi con randomness
+        """
+        import random
+        
+        current_time = time.time()
+        time_since_change = current_time - self._last_pot_change_time
+        
+        if time_since_change < self._idle_threshold_seconds:
+            # Attivo: velocità massima
+            base_interval = self.frame_interval_ms
+        else:
+            # Idle: riduce FPS
+            base_interval = self.frame_interval_ms * 5  # 100ms -> 500ms (10 FPS -> 2 FPS)
+        
+        # ADD JITTER: ±10% randomness (mimics human variance, evades pattern detection)
+        jitter_range = base_interval * 0.1
+        jitter = random.uniform(-jitter_range, jitter_range)
+        final_interval = base_interval + jitter
+        
+        # Ensure minimum 50ms (avoid too fast)
+        return max(50, final_interval)
+
+    
     def stop(self):
-        """Ferma il worker."""
-        self._running = False
+        """Ferma il worker (thread-safe)."""
+        with QMutexLocker(self._mutex):
+            self._running = False
     
     def pause(self):
-        """Mette in pausa il worker."""
-        self._paused = True
+        """Mette in pausa il worker (thread-safe)."""
+        with QMutexLocker(self._mutex):
+            self._paused = True
     
     def resume(self):
-        """Riprende il worker."""
-        self._paused = False
+        """Riprende il worker (thread-safe)."""
+        with QMutexLocker(self._mutex):
+            self._paused = False
     
     def _cleanup(self):
         """Pulisce le risorse."""

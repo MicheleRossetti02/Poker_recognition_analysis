@@ -344,6 +344,51 @@ class PokerDashboard(QMainWindow):
         
         main_layout.addWidget(self.info_section)
         
+        # === SEZIONE STRATEGY (Position + Hand Strength) ===
+        self.strategy_section = SectionFrame("Strategy Info")
+        
+        # Position
+        pos_container = QWidget()
+        pos_container.setStyleSheet("background: transparent;")
+        pos_layout = QVBoxLayout(pos_container)
+        pos_layout.setContentsMargins(0, 0, 0, 0)
+        pos_layout.setSpacing(2)
+        
+        pos_title = QLabel("POSITION")
+        pos_title.setFont(QFont("Arial", 10))
+        pos_title.setStyleSheet("color: #888; background: transparent;")
+        
+        self.pos_label = QLabel("Unknown")
+        self.pos_label.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        self.pos_label.setStyleSheet("color: #00d4ff; background: transparent;")
+        
+        pos_layout.addWidget(pos_title)
+        pos_layout.addWidget(self.pos_label)
+        
+        # Hand Strength
+        hand_str_container = QWidget()
+        hand_str_container.setStyleSheet("background: transparent;")
+        hand_str_layout = QVBoxLayout(hand_str_container)
+        hand_str_layout.setContentsMargins(0, 0, 0, 0)
+        hand_str_layout.setSpacing(2)
+        
+        hand_str_title = QLabel("HAND")
+        hand_str_title.setFont(QFont("Arial", 10))
+        hand_str_title.setStyleSheet("color: #888; background: transparent;")
+        
+        self.hand_strength_label = QLabel("--")
+        self.hand_strength_label.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        self.hand_strength_label.setStyleSheet("color: #ffd700; background: transparent;")
+        
+        hand_str_layout.addWidget(hand_str_title)
+        hand_str_layout.addWidget(self.hand_strength_label)
+        
+        self.strategy_section.add_widget(pos_container)
+        self.strategy_section.add_widget(hand_str_container)
+        self.strategy_section.content_layout.addStretch()
+        
+        main_layout.addWidget(self.strategy_section)
+        
         # Status bar
         self.status_label = QLabel("🔴 Waiting for data...")
         self.status_label.setStyleSheet("color: #666; font-size: 11px; background: transparent;")
@@ -421,6 +466,29 @@ class PokerDashboard(QMainWindow):
             }
             action_color = action_colors.get(action, "#00d4ff")
             self.action_label.setStyleSheet(f"color: {action_color}; background: transparent;")
+            
+            # Aggiorna Position
+            hero_pos = data.get("hero_position", "Unknown")
+            self.pos_label.setText(hero_pos)
+            # Colore cyan per posizione
+            self.pos_label.setStyleSheet("color: #00d4ff; background: transparent;")
+            
+            # Aggiorna Hand Strength
+            hand_desc = data.get("hand_description", "--")
+            self.hand_strength_label.setText(hand_desc)
+            
+            # Colore in base al rank
+            hand_rank = data.get("hand_rank", 0)
+            if hand_rank > 0:
+                if hand_rank <= 1000:  # Top hands
+                    color = "#ffd700"  # Gold
+                elif hand_rank <= 3000:  # Medium
+                    color = "#00d4ff"  # Cyan
+                else:  # Weak
+                    color = "#888"  # Gray
+            else:
+                color = "#666"  # Default
+            self.hand_strength_label.setStyleSheet(f"color: {color}; background: transparent;")
             
             # Status
             self.status_label.setText("🟢 Connected - Processing...")

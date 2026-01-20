@@ -123,8 +123,18 @@ class TableReader:
         self._previous_pot: float = 0.0
         self._previous_stack: float = 0.0
         
+        # Visual Pot Diffing Cache (optimization)
+        self._last_pot_frame: Optional[np.ndarray] = None
+        self._last_pot_value: float = 0.0
+        self._last_pot_text: str = ""
+        self._last_pot_confidence: float = 0.0
+        self._pot_diff_threshold: float = 2.0  # % pixel changed to trigger OCR
+        self._ocr_skipped_count: int = 0
+        self._ocr_executed_count: int = 0
+        
         print(f"📖 Inizializzazione TableReader (OCR)...")
         print(f"   GPU/MPS: {'Abilitato' if use_gpu else 'Disabilitato'}")
+        print(f"   Visual Pot Diffing: Abilitato (threshold: {self._pot_diff_threshold}%)")
         
         # Inizializza EasyOCR
         try:
@@ -181,6 +191,11 @@ class TableReader:
         """
         Legge un numero da una regione specifica dello schermo.
         
+        OPTIMIZATION: Visual Pot Diffing
+        - Confronta frame corrente con ultimo frame processato
+        - Se differenza < threshold, restituisce ultimo valore (skip OCR)
+        - Se OCR fallisce, mantiene valore precedente (error recovery)
+        
         Args:
             frame: Frame BGR completo
             region: Configurazione della regione
@@ -203,18 +218,42 @@ class TableReader:
         
         cropped = frame[y1:y2, x1:x2]
         
+        # === VISUAL POT DIFFING (solo per pot region) ===
+        if region.name == "Pot" and self._last_pot_frame is not None:
+            # Confronta frame corrente con ultimo
+            should_skip_ocr = self._compare_frames_for_skip(cropped, self._last_pot_frame)
+            
+            if should_skip_ocr:
+                self._ocr_skipped_count += 1
+                if self.verbose:
+                    print(f"   ⏭️  OCR Skipped (Visual Match) - Using cached value: {self._last_pot_value}")
+                # Restituisci valore cached
+                return self._last_pot_value, self._last_pot_text, self._last_pot_confidence
+        
+        # === OCR EXECUTION ===
         # Preprocessing per migliorare OCR
         processed = self._preprocess_for_ocr(cropped)
         
         # Esegui OCR
         try:
             results = self.reader.readtext(processed, detail=1)
+            self._ocr_executed_count += 1
         except Exception as e:
             if self.verbose:
-                print(f"   ⚠️ Errore OCR: {e}")
+                print(f"   ⚠️  Errore OCR: {e}")
+            # Error Recovery: mantieni valore precedente
+            if region.name == "Pot" and self._last_pot_value > 0:
+                if self.verbose:
+                    print(f"   🔄 Error Recovery: Using previous value {self._last_pot_value}")
+                return self._last_pot_value, self._last_pot_text, self._last_pot_confidence
             return 0.0, "", 0.0
         
         if not results:
+            # Error Recovery: OCR non ha trovato nulla
+            if region.name == "Pot" and self._last_pot_value > 0:
+                if self.verbose:
+                    print(f"   🔄 Error Recovery: No OCR results, using previous {self._last_pot_value}")
+                return 0.0, "", 0.0 # Changed from self._last_pot_value to 0.0 as per original logic for no results
             return 0.0, "", 0.0
         
         # Combina tutti i testi rilevati
@@ -224,10 +263,67 @@ class TableReader:
         # Estrai il numero
         numeric_value = self._extract_number(raw_text)
         
+        # Error Recovery: risultato incoerente (stringa vuota o valore 0 sospetto)
+        if numeric_value == 0.0 and not raw_text.strip():
+            if region.name == "Pot" and self._last_pot_value > 0:
+                if self.verbose:
+                    print(f"   🔄 Error Recovery: Invalid OCR result, using previous {self._last_pot_value}")
+                return self._last_pot_value, self._last_pot_text, self._last_pot_confidence
+        
+        # Update cache per pot region se OCR valido
+        if region.name == "Pot" and numeric_value >= 0:
+            self._last_pot_frame = cropped.copy()
+            self._last_pot_value = numeric_value
+            self._last_pot_text = raw_text
+            self._last_pot_confidence = avg_confidence
+        
         if self.verbose:
             print(f"   OCR {region.name}: '{raw_text}' -> {numeric_value} (conf: {avg_confidence:.2f})")
         
         return numeric_value, raw_text, avg_confidence
+    
+    def _compare_frames_for_skip(
+        self,
+        current_frame: np.ndarray,
+        previous_frame: np.ndarray
+    ) -> bool:
+        """
+        Confronta due frame per decidere se skippare OCR.
+        Usa cv2.absdiff + percentuale pixel cambiati.
+        
+        Args:
+            current_frame: Frame corrente (BGR)
+            previous_frame: Frame precedente (BGR)
+        
+        Returns:
+            True se i frame sono simili e OCR può essere skippato
+        """
+        # Verifica dimensioni compatibili
+        if current_frame.shape != previous_frame.shape:
+            return False
+        
+        # Converti in grayscale per confronto
+        gray_curr = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY) if len(current_frame.shape) == 3 else current_frame
+        gray_prev = cv2.cvtColor(previous_frame, cv2.COLOR_BGR2GRAY) if len(previous_frame.shape) == 3 else previous_frame
+        
+        # Calcola differenza assoluta
+        diff = cv2.absdiff(gray_curr, gray_prev)
+        
+        # Binary threshold per identificare pixel "cambiati"
+        _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+        
+        # Conta pixel cambiati
+        changed_pixels = cv2.countNonZero(thresh)
+        total_pixels = thresh.size
+        change_percent = (changed_pixels / total_pixels) * 100
+        
+        # Skip OCR se differenza < threshold
+        should_skip = change_percent < self._pot_diff_threshold
+        
+        if self.verbose and not should_skip:
+            print(f"   🔍 Visual diff: {change_percent:.1f}% changed (threshold: {self._pot_diff_threshold}%)")
+        
+        return should_skip
     
     def _preprocess_for_ocr(self, image: np.ndarray) -> np.ndarray:
         """
@@ -402,8 +498,31 @@ class TableReader:
         """Resetta lo stato precedente (per nuova mano o sessione)."""
         self._previous_pot = 0.0
         self._previous_stack = 0.0
+        # Reset visual cache
+        self._last_pot_frame = None
+        self._last_pot_value = 0.0
+        self._last_pot_text = ""
+        self._last_pot_confidence = 0.0
         if self.verbose:
             print("   🔄 Stato resettato")
+    
+    def get_ocr_stats(self) -> Dict[str, Any]:
+        """
+        Restituisce statistiche sull'utilizzo OCR e visual diffing.
+        
+        Returns:
+            Dizionario con contatori e efficiency rate
+        """
+        total_calls = self._ocr_executed_count + self._ocr_skipped_count
+        skip_rate = (self._ocr_skipped_count / total_calls * 100) if total_calls > 0 else 0
+        
+        return {
+            "ocr_executed": self._ocr_executed_count,
+            "ocr_skipped": self._ocr_skipped_count,
+            "total_calls": total_calls,
+            "skip_rate_percent": round(skip_rate, 1),
+            "visual_diff_threshold": self._pot_diff_threshold
+        }
     
     def calibrate_region(
         self,

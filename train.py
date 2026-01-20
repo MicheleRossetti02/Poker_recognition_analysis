@@ -20,12 +20,44 @@ WORKSPACE = "pokergtobot"
 PROJECT = "poker-gto"
 VERSION = 4
 
-# Training Parameters
-MODEL = "yolov8n.pt"  # nano model (veloce)
-EPOCHS = 100
+# Training Parameters - OPTIMIZED FOR PRODUCTION
+MODEL = "yolov8s.pt"  # Upgrade to SMALL for better accuracy (still MPS-compatible)
+EPOCHS = 200  # Increased for better convergence
 IMAGE_SIZE = 640
-BATCH_SIZE = 16  # Riduci a 8 se hai problemi di memoria
+BATCH_SIZE = 16  # Riduci a 8 se hai problemi di memoria con yolov8s
 DEVICE = "mps"  # Apple Silicon Metal
+
+# Hyperparameters Optimization
+LR0 = 0.01  # Initial learning rate
+LRF = 0.01  # Final learning rate (fraction of lr0)
+WARMUP_EPOCHS = 3  # Learning rate warmup
+PATIENCE = 30  # Early stopping patience (increased for larger model)
+
+# Data Augmentation (for better generalization)
+AUGMENT = True
+MOSAIC = 1.0  # Mosaic augmentation probability
+MIXUP = 0.1  # Mixup augmentation probability
+HSV_H = 0.015  # Image HSV hue augmentation
+HSV_S = 0.7  # Image HSV saturation augmentation
+HSV_V = 0.4  # Image HSV value augmentation
+
+# AGGRESSIVE AUGMENTATION for PokerStars Variance
+# -------------------------------------------------
+# Geometric transformations
+DEGREES = 5.0        # Rotation augmentation (±5°) - cards slightly tilted
+TRANSLATE = 0.1      # Translation (10% shift) - handle position variance
+SCALE = 0.15         # Scale variance (±15%) - different zoom levels
+SHEAR = 2.0          # Shear transformation - perspective changes
+PERSPECTIVE = 0.0003 # Perspective distortion - viewing angles
+FLIPUD = 0.0         # NO vertical flip (cards have orientation)
+FLIPLR = 0.0         # NO horizontal flip (suits would be mirrored)
+
+# Quality variance
+BLUR = 0.01          # Motion blur probability (1%)
+
+# Advanced augmentation
+COPY_PASTE = 0.05    # 5% probability to paste cards from other images
+CLOSE_MOSAIC = 0.3   # Use for 30% of epochs (better for small objects)
 
 # ============================================================================
 # MAIN
@@ -99,6 +131,7 @@ def main():
     print("\n🏋️ Avvio training... (potrebbe richiedere tempo)\n")
     
     results = model.train(
+        # Core parameters
         data=data_yaml_path,
         epochs=EPOCHS,
         imgsz=IMAGE_SIZE,
@@ -108,12 +141,45 @@ def main():
         name="train",
         exist_ok=True,
         verbose=True,
-        plots=True,  # Grafici dei progressi
-        # Ottimizzazioni per Apple Silicon
+        plots=True,
+        
+        # Optimization
         workers=4,
-        patience=20,  # Early stopping
+        patience=PATIENCE,
         save=True,
-        save_period=10,  # Salva checkpoint ogni 10 epochs
+        save_period=10,
+        
+        # Learning rate schedule
+        lr0=LR0,
+        lrf=LRF,
+        warmup_epochs=WARMUP_EPOCHS,
+        warmup_momentum=0.8,    # Start momentum at 0.8
+        momentum=0.937,         # Final momentum  
+        weight_decay=0.0005,    # L2 regularization
+        
+        # Standard augmentation
+        augment=AUGMENT,
+        mosaic=MOSAIC,
+        mixup=MIXUP,
+        hsv_h=HSV_H,
+        hsv_s=HSV_S,
+        hsv_v=HSV_V,
+        
+        # AGGRESSIVE augmentation (PokerStars variance)
+        degrees=DEGREES,
+        translate=TRANSLATE,
+        scale=SCALE,
+        shear=SHEAR,
+        perspective=PERSPECTIVE,
+        flipud=FLIPUD,
+        fliplr=FLIPLR,
+        blur=BLUR,
+        copy_paste=COPY_PASTE,
+        close_mosaic=CLOSE_MOSAIC,
+        
+        # Optimizer
+        optimizer='AdamW',      # Better than SGD for card detection
+        cos_lr=True,            # Cosine learning rate scheduling
     )
     
     # =========================================================================

@@ -39,6 +39,10 @@ CARD_CLASSES = [
     "As", "2s", "3s", "4s", "5s", "6s", "7s", "8s", "9s", "Ts", "Js", "Qs", "Ks",
 ]
 
+# ID classe per dealer button
+BUTTON_CLASS_ID = 52
+BUTTON_CLASS_NAME = "button"
+
 
 class GameStage(Enum):
     """Fasi del gioco in base al numero di carte sul board."""
@@ -46,6 +50,17 @@ class GameStage(Enum):
     FLOP = "Flop"
     TURN = "Turn"
     RIVER = "River"
+    UNKNOWN = "Unknown"
+
+
+class HeroPosition(Enum):
+    """Posizioni al tavolo per 6-max."""
+    BTN = "Button"
+    SB = "Small Blind"
+    BB = "Big Blind"
+    UTG = "Under The Gun"
+    HJ = "Hijack"
+    CO = "Cutoff"
     UNKNOWN = "Unknown"
 
 
@@ -64,6 +79,22 @@ class CardDetection:
             "confidence": round(self.confidence, 3),
             "box": list(self.box),
             "center": (self.center_x, self.center_y)
+        }
+
+
+@dataclass
+class ButtonDetection:
+    """Rappresenta il dealer button rilevato."""
+    confidence: float
+    box: Tuple[int, int, int, int]  # (x1, y1, x2, y2)
+    center_x: int
+    center_y: int
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "confidence": round(self.confidence, 3),
+            "box": list(self.box),
+            "position": (self.center_x, self.center_y)
         }
 
 
@@ -156,8 +187,9 @@ class PokerBrain:
         # Esegui inferenza YOLO
         results = self.model(frame, verbose=False)
         
-        # Lista per raccogliere tutte le detection valide
+        # Lista per raccogliere detection valide
         all_detections: List[CardDetection] = []
+        button_detection: Optional[ButtonDetection] = None
         
         # Processa i risultati
         for result in results:
@@ -185,15 +217,24 @@ class PokerBrain:
                 center_x = (x1 + x2) // 2
                 center_y = (y1 + y2) // 2
                 
-                detection = CardDetection(
-                    card=class_name,
-                    confidence=conf,
-                    box=(x1, y1, x2, y2),
-                    center_x=center_x,
-                    center_y=center_y
-                )
-                
-                all_detections.append(detection)
+                # Gestione separata per dealer button (classe 52)
+                if class_id == BUTTON_CLASS_ID or class_name == BUTTON_CLASS_NAME:
+                    button_detection = ButtonDetection(
+                        confidence=conf,
+                        box=(x1, y1, x2, y2),
+                        center_x=center_x,
+                        center_y=center_y
+                    )
+                else:
+                    # È una carta normale
+                    detection = CardDetection(
+                        card=class_name,
+                        confidence=conf,
+                        box=(x1, y1, x2, y2),
+                        center_x=center_x,
+                        center_y=center_y
+                    )
+                    all_detections.append(detection)
         
         # Classifica le carte in base alla posizione Y
         my_hand_detections: List[CardDetection] = []
@@ -222,11 +263,21 @@ class PokerBrain:
         # Determina la fase del gioco
         game_stage = self._determine_game_stage(len(board))
         
+        # Estima posizione Hero se il button è rilevato
+        hero_position = HeroPosition.UNKNOWN
+        if button_detection:
+            hero_position = self._get_hero_position(
+                button_pos=(button_detection.center_x, button_detection.center_y),
+                frame_size=(frame_width, frame_height)
+            )
+        
         # Prepara il risultato
         result = {
             "my_hand": my_hand,
             "board": board,
             "game_stage": game_stage.value,
+            "button_detected": button_detection is not None,
+            "hero_position": hero_position.value,
             "detections": [d.to_dict() for d in all_detections],
             "stats": {
                 "total_cards_detected": len(all_detections),
@@ -236,6 +287,10 @@ class PokerBrain:
                 "y_threshold_pixels": y_threshold_pixels
             }
         }
+        
+        # Aggiungi button info se rilevato
+        if button_detection:
+            result["button_info"] = button_detection.to_dict()
         
         # Disegna i bounding box se richiesto
         if draw_boxes:
@@ -253,8 +308,98 @@ class PokerBrain:
             print(f"   Mia mano: {my_hand}")
             print(f"   Board: {board}")
             print(f"   Fase: {game_stage.value}")
+            if button_detection:
+                print(f"   Button: rilevato a ({button_detection.center_x}, {button_detection.center_y})")
+                print(f"   Hero Position: {hero_position.value}")
         
         return result
+    
+    def _get_hero_position(
+        self,
+        button_pos: Tuple[int, int],
+        frame_size: Tuple[int, int]
+    ) -> HeroPosition:
+        """
+        Stima la posizione Hero (giocatore) in base alla posizione del button.
+        
+        Per tavolo 6-max su PokerStars, l'Hero è tipicamente in basso al centro.
+        Usando la posizione del button possiamo stimare dove siede Hero rispetto
+        agli altri giocatori.
+        
+        Mapping 6-max (vista dall'alto, Hero in basso):
+        
+                    UTG (top-left)
+                    /
+               HJ          BB (top-right)
+              /             \\
+        CO (left)      table     SB (right)
+              \\             /
+               BTN        HERO
+                    \\   /
+                  (bottom center)
+        
+        Args:
+            button_pos: (x, y) coordinate del centro del button
+            frame_size: (width, height) dimensioni del frame
+        
+        Returns:
+            HeroPosition enum
+        """
+        button_x, button_y = button_pos
+        frame_width, frame_height = frame_size
+        
+        # Normalizza coordinate (0.0 - 1.0)
+        norm_x = button_x / frame_width
+        norm_y = button_y / frame_height
+        
+        # Centro tavolo (approssimativo)
+        center_x = 0.5
+        center_y = 0.45  # Leggermente sopra il centro (il board è in alto)
+        
+        # Calcola angolo del button rispetto al centro
+        # atan2 restituisce angolo in radianti tra -π e +π
+        import math
+        dx = norm_x - center_x
+        dy = norm_y - center_y
+        angle = math.atan2(dy, dx)  # Radianti
+        angle_deg = math.degrees(angle)  # Converti in gradi
+        
+        # Normalizza angolo a 0-360 (0° = destra, senso antiorario)
+        if angle_deg < 0:
+            angle_deg += 360
+        
+        # Mapping 6-max basato su zone angolari
+        # Assumiamo Hero sempre in basso al centro (~270°)
+        # Button è relativo a Hero
+        
+        #   Zone (gradi rispetto al centro, 0° = destra):
+        #   330-30°:   RIGHT SIDE  → Hero è SB (button a destra)
+        #   30-90°:    TOP-RIGHT   → Hero è BB (button in SB)
+        #   90-150°:   TOP-LEFT    → Hero è UTG (button in BB)
+        #   150-210°:  LEFT SIDE   → Hero è HJ (button in UTG)
+        #   210-270°:  BOTTOM-LEFT → Hero è CO (button in HJ)
+        #   270-330°:  BOTTOM      → Hero è BTN (button su di noi!)
+        
+        if 270 <= angle_deg < 330:
+            # Button in basso/basso-sinistra rispetto centro = Hero è BTN
+            return HeroPosition.BTN
+        elif (330 <= angle_deg <= 360) or (0 <= angle_deg < 30):
+            # Button a destra = Hero è SB
+            return HeroPosition.SB
+        elif 30 <= angle_deg < 90:
+            # Button in alto a destra = Hero è BB
+            return HeroPosition.BB
+        elif 90 <= angle_deg < 150:
+            # Button in alto a sinistra = Hero è UTG
+            return HeroPosition.UTG
+        elif 150 <= angle_deg < 210:
+            # Button a sinistra = Hero è HJ
+            return HeroPosition.HJ
+        elif 210 <= angle_deg < 270:
+            # Button in basso a sinistra = Hero è CO
+            return HeroPosition.CO
+        else:
+            return HeroPosition.UNKNOWN
     
     def _determine_game_stage(self, board_count: int) -> GameStage:
         """Determina la fase del gioco in base al numero di carte sul board."""
