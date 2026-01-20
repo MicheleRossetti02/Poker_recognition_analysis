@@ -1,0 +1,59 @@
+{
+  "timestamp": "2026-01-20T18:06:25.833899",
+  "statistics": {
+    "total_processed": 1015,
+    "ready_for_upload": 391,
+    "review_needed": 619,
+    "no_labels_found": 5,
+    "total_labels_generated": 2929,
+    "errors": 0,
+    "card_distribution": {
+      "53": 939,
+      "52": 123,
+      "31": 15,
+      "54": 700,
+      "44": 102,
+      "49": 243,
+      "47": 214,
+      "16": 4,
+      "14": 22,
+      "5": 28,
+      "9": 33,
+      "25": 25,
+      "26": 90,
+      "51": 19,
+      "18": 24,
+      "24": 64,
+      "4": 8,
+      "48": 27,
+      "3": 32,
+      "36": 66,
+      "30": 17,
+      "11": 11,
+      "1": 34,
+      "27": 20,
+      "39": 18,
+      "13": 5,
+      "7": 6,
+      "6": 3,
+      "10": 10,
+      "28": 1,
+      "43": 1,
+      "50": 16,
+      "19": 3,
+      "29": 2,
+      "2": 2,
+      "41": 2
+    }
+  },
+  "thresholds": {
+    "high_confidence": 0.6,
+    "low_confidence": 0.3
+  },
+  "recommendations": {
+    "upload_rate": 38.522167487684726,
+    "immediate_upload": 391,
+    "needs_review": 619,
+    "manual_annotation": 5
+  }
+}
