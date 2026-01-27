@@ -79,6 +79,6 @@ names:
   # Oggetti UI e dealer button
   53: dealer_btn      # Dealer button (D)
   54: player_bar      # Barra info giocatore (UI element)
-  55: rc              # Unknown object
+  55: player_info     # sezione con nome e grande buio
   56: rivals_card     # Carta avversario coperta
 
