@@ -17,7 +17,7 @@ def main():
     print("=" * 70)
     
     # Configurazione
-    MODEL_PATH = "runs/detect/train4/weights/best.pt"
+    MODEL_PATH = "runs/detect/train/weights/best.pt"
     IMAGES_DIR = "organized_dataset_clean/FOTO dataset"
     OUTPUT_DIR = "organized_dataset_clean/FOTO dataset_annotated"
     CONFIDENCE_THRESHOLD = 0.40  # 40%
@@ -107,7 +107,7 @@ def main():
                         height = (y2 - y1) / img_height
                         
                         # Scrivi linea
-                        f.write(f"{cls_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}\\n")
+                        f.write(f"{cls_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}\n")
                 
                 # Copia immagine nella cartella output
                 import shutil

@@ -1,17 +1,18 @@
-# 🔄 Resume Training - 27 Gennaio 2026 (08:30)
+# 🔄 Resume Training - 27 Gennaio 2026 (11:56)
 
 ## 📊 Stato Attuale
-- **Epoca completata**: 78/100
-- **Epoche rimanenti**: 22
+- **Epoca completata**: 87/100  
+- **Epoche rimanenti**: 13
+- **mAP50**: 1.035 (modello migliorato!)
 - **Training interrotto**: Richiesta utente
 
 ## ✅ Checkpoint Disponibili
-- `best.pt`: 18MB (ultima modifica: 02:20)
-- `last.pt`: 18MB (ultima modifica: 08:20) ← **Usa questo**
+- `best.pt`: 18MB (migliore epoca: 09:46)
+- `last.pt`: 18MB (epoca 87: 11:52) ← **Usa questo**
 
 ---
 
-## 🚀 Come Ripartire
+## 🚀 Per Ripartire
 
 ### Comando Resume
 ```bash
@@ -20,30 +21,30 @@ source venv312/bin/activate
 yolo train resume model=runs/detect/train/weights/last.pt
 ```
 
-Il training ripartirà automaticamente dall'**epoca 79** fino a 100.
+Il training ripartirà dall'**epoca 88** fino a 100.
 
 ---
 
-## ⏱️ Tempistiche Stimate
-- **Epoche rimanenti**: 22
-- **Tempo per epoca**: ~2-3 minuti
-- **Tempo totale stimato**: **~45-60 minuti**
+## ⏱️ Tempistiche
+- **Epoche rimanenti**: 13
+- **Tempo stimato**: **~25-35 minuti**
+- **Completamento previsto**: ~12:30
 
 ---
 
 ## 📋 Al Completamento (Epoca 100)
 
-### 1. Verifica Modello
-```bash
-# Test su immagine FOTO dataset
-yolo predict model=runs/detect/train/weights/best.pt \
-  source="organized_dataset_clean/FOTO dataset/poker_952x676_v4_000510_916.jpg" \
-  conf=0.25 save=True
+Procedi con:
+
+### 1. Aggiorna auto_label_massive.py
+Verifica che il path del modello sia corretto:
+```python
+MODEL_PATH = "runs/detect/train/weights/best.pt"
 ```
 
-### 2. Auto-Labeling (se modello OK)
+### 2. Esegui Auto-Labeling
 ```bash
-# Aggiorna path in auto_label_massive.py se necessario
+source venv312/bin/activate
 python auto_label_massive.py
 ```
 
@@ -56,4 +57,4 @@ roboflow upload poker-gto-production \
 
 ---
 
-**Il dataset è già corretto (labels convertiti)! Basta solo completare le ultime 22 epoche.** 🎯
+**Solo 13 epoche rimanenti! 🎯**

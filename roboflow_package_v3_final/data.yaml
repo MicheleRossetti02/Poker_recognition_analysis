@@ -1,0 +1,15 @@
+# Roboflow Upload Package V3 Final
+# Generated: 2026-01-27
+# Images with corrected class mapping
+
+train: train/images
+val: ''
+test: ''
+
+nc: 56  # number of classes
+names:
+  # Classes 0-51: Cards (52 total)
+  # Class 52: dealer_btn
+  # Class 53: player_bar
+  # Class 54: player_info
+  # Class 55: rivals_card
