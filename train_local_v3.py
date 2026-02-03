@@ -34,24 +34,25 @@ def main():
             model_path = "yolov8n.pt"
 
     print(f"Training on dataset: {data_path}")
-    print(f"Model: {model_path} (Resume: {resume_mode})")
+    # Load Model
+    # If a previous run exists, we use its weights but start a NEW run to apply stable settings
+    if os.path.exists(last_pt):
+        print(f"⚠️ Recovering weights from crashed run: {last_pt}")
+        model = YOLO(last_pt)
+    else:
+        model = YOLO(model_path)
     
-    # Load Model (Restored line)
-    model = YOLO(model_path)
-    
-    # Train (Turbo-RAM Mode)
-    # New run name to force fresh start with new params
+    # Train (Stable Mode - No RAM Cache)
     results = model.train(
         data=data_path,
-        epochs=50,                  # Reduced to 50
-        imgsz=320,                  # Reduced resolution for speed
-        batch=-1,                   # Autotune batch size
+        epochs=50,                  
+        imgsz=320,                  
+        batch=-1,                   
         device='mps',
-
-        cache='ram',                # Cache in RAM
+        # cache='ram',  <-- REMOVED to prevent OOM Crash
         plots=True,
         project='runs/poker_v3',
-        name='train_v3_turbo',      # New name
+        name='train_v3_stable',      # New name
         save=True,
         save_period=1,
         exist_ok=True 
