@@ -41,6 +41,11 @@ poker_dataset/
 !screenshot_*.png
 !calibration_test.png
 
+# Node / dashboard
+node_modules/
+poker_gto_dashboard/node_modules/
+poker_gto_dashboard/dist/
+
 # IDE
 .vscode/
 .idea/
@@ -57,3 +62,14 @@ logs/
 *.tmp
 *.bak
 *.cache
+
+# Runtime data artifacts (live vision stack)
+data/
+players_history.json
+player_stats.json
+session_log.csv
+tournament_report_latest.json
+tournament_report_latest.md
+.bench_pid
+p95_p99_*.txt
+latency_*.txt

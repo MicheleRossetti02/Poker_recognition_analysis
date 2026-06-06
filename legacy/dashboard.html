@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🃏 GTO Poker Dashboard - Live</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a0f1c 0%, #1a1f2e 100%);
+            color: white;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 1.1em;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .connected {
+            background: #10b981;
+        }
+
+        .disconnected {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Poker Table */
+        .poker-table-container {
+            position: relative;
+            width: 90vw;
+            max-width: 1200px;
+            aspect-ratio: 16 / 10;
+        }
+
+        .poker-table {
+            position: absolute;
+            inset: 40px;
+            background: linear-gradient(135deg, #047857 0%, #065f46 100%);
+            border-radius: 50%;
+            border: 12px solid #92400e;
+            box-shadow:
+                0 0 60px rgba(0, 0, 0, 0.5),
+                inset 0 0 100px rgba(0, 0, 0, 0.3);
+        }
+
+        /* GTO Panel - Center */
+        .gto-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 50%;
+            max-width: 600px;
+            padding: 30px;
+            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+            border-radius: 20px;
+            border: 3px solid #fbbf24;
+            box-shadow: 0 10px 50px rgba(0, 0, 0, 0.8);
+            text-align: center;
+        }
+
+        .gto-title {
+            font-size: 1.2em;
+            color: #fbbf24;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+
+        .gto-action {
+            font-size: 3.5em;
+            font-weight: 900;
+            padding: 20px;
+            border-radius: 12px;
+            margin: 15px 0;
+        }
+
+        .action-green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            box-shadow: 0 8px 30px rgba(16, 185, 129, 0.4);
+        }
+
+        .action-yellow {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            color: #1f2937;
+            box-shadow: 0 8px 30px rgba(251, 191, 36, 0.4);
+        }
+
+        .action-red {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            box-shadow: 0 8px 30px rgba(239, 68, 68, 0.4);
+        }
+
+        .action-gray {
+            background: #374151;
+            color: #9ca3af;
+        }
+
+        /* Game Info */
+        .game-info {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #d1d5db;
+        }
+
+        .info-item {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 5px 12px;
+            border-radius: 8px;
+        }
+
+        .info-label {
+            color: #9ca3af;
+            margin-right: 5px;
+        }
+
+        .info-value {
+            font-weight: bold;
+            color: white;
+        }
+
+        /* Player Seats */
+        .player-seat {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            width: 80px;
+            height: 80px;
+            background: #1f2937;
+            border: 3px solid #374151;
+            border-radius: 50%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85em;
+            transition: all 0.3s;
+        }
+
+        .player-seat.hero {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            border-color: #fbbf24;
+            box-shadow: 0 0 20px rgba(251, 191, 36, 0.6);
+        }
+
+        .player-seat.active {
+            border-color: #10b981;
+        }
+
+        .player-seat.folded {
+            opacity: 0.4;
+        }
+
+        .position-label {
+            font-size: 0.75em;
+            font-weight: bold;
+            color: #9ca3af;
+        }
+
+        .hero .position-label {
+            color: #1f2937;
+        }
+
+        .stack-size {
+            font-size: 0.7em;
+            margin-top: 3px;
+            color: white;
+        }
+
+        .dealer-button {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            width: 20px;
+            height: 20px;
+            background: #dc2626;
+            border-radius: 50%;
+            border: 2px solid white;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🃏 Live GTO Poker Dashboard</h1>
+            <div class="connection-status">
+                <div class="status-dot disconnected" id="statusDot"></div>
+                <span id="statusText">Connessione in corso...</span>
+            </div>
+        </div>
+
+        <!-- Poker Table -->
+        <div class="poker-table-container">
+            <div class="poker-table">
+                <!-- GTO Panel -->
+                <div class="gto-panel">
+                    <!-- Hero Cards - BIG AND PROMINENT -->
+                    <div style="margin-bottom: 15px; padding: 15px; background: rgba(0,0,0,0.4); border-radius: 12px;">
+                        <div style="font-size: 0.9em; color: #fbbf24; margin-bottom: 8px; font-weight: bold;">🎴 LE TUE
+                            CARTE</div>
+                        <div id="heroCards"
+                            style="font-size: 3em; font-weight: 900; color: #10b981; text-shadow: 0 2px 10px rgba(16, 185, 129, 0.6);">
+                            --
+                        </div>
+                        <div id="heroHand" style="font-size: 1.2em; color: #9ca3af; margin-top: 5px;">
+                            In attesa...
+                        </div>
+                    </div>
+
+                    <!-- Board Cards -->
+                    <div style="margin-bottom: 15px; padding: 10px; background: rgba(0,0,0,0.3); border-radius: 8px;">
+                        <div style="font-size: 0.85em; color: #9ca3af; margin-bottom: 5px;">🃏 Board</div>
+                        <div id="boardCards" style="font-size: 2em; font-weight: bold; color: white;">
+                            --
+                        </div>
+                    </div>
+
+                    <div class="gto-title">🎯 GTO RECOMMENDATION</div>
+                    <div class="gto-action action-gray" id="gtoAction">
+                        In attesa...
+                    </div>
+                    <div class="game-info">
+                        <div class="info-item">
+                            <span class="info-label">Hand:</span>
+                            <span class="info-value" id="handNum">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Street:</span>
+                            <span class="info-value" id="street">-</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">Pot:</span>
+                            <span class="info-value" id="pot">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Player Seats -->
+                <div id="playerSeats"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // WebSocket Connection
+        let ws = null;
+        let reconnectTimeout = null;
+
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const gtoAction = document.getElementById('gtoAction');
+        const handNum = document.getElementById('handNum');
+        const street = document.getElementById('street');
+        const pot = document.getElementById('pot');
+        const board = document.getElementById('board');
+        const playerSeats = document.getElementById('playerSeats');
+
+        // Position angles for 9-max table
+        const POSITIONS = {
+            'BTN': { left: '50%', top: '85%' },
+            'SB': { left: '25%', top: '70%' },
+            'BB': { left: '10%', top: '50%' },
+            'UTG': { left: '15%', top: '25%' },
+            'UTG+1': { left: '30%', top: '10%' },
+            'MP': { left: '50%', top: '5%' },
+            'CO': { left: '75%', top: '70%' },
+            'HJ': { left: '85%', top: '50%' },
+            'UTG+2': { left: '70%', top: '10%' }
+        };
+
+        function connectWebSocket() {
+            console.log('🔌 Connessione a WebSocket...');
+            ws = new WebSocket('ws://localhost:8765');
+
+            ws.onopen = () => {
+                console.log('✅ WebSocket connesso');
+                statusDot.className = 'status-dot connected';
+                statusText.textContent = 'Connesso al bot';
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('📡 Dati ricevuti:', data);
+                    updateUI(data);
+                } catch (err) {
+                    console.error('Errore parsing:', err);
+                }
+            };
+
+            ws.onerror = (err) => {
+                console.error('❌ Errore WebSocket:', err);
+                statusDot.className = 'status-dot disconnected';
+                statusText.textContent = 'Errore di connessione';
+            };
+
+            ws.onclose = () => {
+                console.log('🔌 WebSocket disconnesso');
+                statusDot.className = 'status-dot disconnected';
+                statusText.textContent = 'Disconnesso - riconnessione...';
+
+                // Auto-reconnect dopo 3 secondi
+                clearTimeout(reconnectTimeout);
+                reconnectTimeout = setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function updateUI(gameState) {
+            // Update HERO CARDS - MOST IMPORTANT!
+            const heroCardsEl = document.getElementById('heroCards');
+            const heroHandEl = document.getElementById('heroHand');
+            const boardCardsEl = document.getElementById('boardCards');
+
+            if (gameState.hero && gameState.hero.cards && gameState.hero.cards.length > 0) {
+                // Format cards with suits
+                const formattedCards = gameState.hero.cards.map(card => {
+                    if (!card || card.length < 2) return card;
+                    const rank = card.slice(0, -1);
+                    const suit = card.slice(-1);
+                    const suitSymbol = {
+                        'h': '♥', 'H': '♥',
+                        'd': '♦', 'D': '♦',
+                        'c': '♣', 'C': '♣',
+                        's': '♠', 'S': '♠'
+                    }[suit] || suit;
+                    return rank + suitSymbol;
+                }).join('  ');
+
+                heroCardsEl.textContent = formattedCards || '--';
+                heroHandEl.textContent = gameState.hero.hand || 'Unknown';
+            } else {
+                heroCardsEl.textContent = '--';
+                heroHandEl.textContent = 'In attesa carte...';
+            }
+
+            // Update BOARD CARDS
+            if (gameState.board && gameState.board.length > 0) {
+                const formattedBoard = gameState.board.map(card => {
+                    if (!card || card.length < 2) return card;
+                    const rank = card.slice(0, -1);
+                    const suit = card.slice(-1);
+                    const suitSymbol = {
+                        'h': '♥', 'H': '♥',
+                        'd': '♦', 'D': '♦',
+                        'c': '♣', 'C': '♣',
+                        's': '♠', 'S': '♠'
+                    }[suit] || suit;
+                    return rank + suitSymbol;
+                }).join('  ');
+                boardCardsEl.textContent = formattedBoard;
+            } else {
+                boardCardsEl.textContent = (gameState.street === 'Preflop' ? 'Preflop' : '--');
+            }
+
+            // Update game info
+            handNum.textContent = `#${gameState.hand_id || 0}`;
+            street.textContent = gameState.street || 'Preflop';
+            pot.textContent = `${(gameState.pot || 0).toFixed(1)}BB`;
+
+            // Update GTO suggestion
+            const suggestion = gameState.gto_suggestion?.action || 'In attesa...';
+            gtoAction.textContent = suggestion;
+
+            // Set color based on action
+            gtoAction.className = 'gto-action';
+            const upper = suggestion.toUpperCase();
+            if (upper.includes('RAISE') || upper.includes('BET')) {
+                gtoAction.classList.add('action-green');
+            } else if (upper.includes('CALL')) {
+                gtoAction.classList.add('action-yellow');
+            } else if (upper.includes('FOLD')) {
+                gtoAction.classList.add('action-red');
+            } else {
+                gtoAction.classList.add('action-gray');
+            }
+
+            // Update player seats
+            if (gameState.players && gameState.players.length > 0) {
+                renderPlayers(gameState.players, gameState.hero?.position);
+            }
+        }
+
+        function renderPlayers(players, heroPosition) {
+            playerSeats.innerHTML = '';
+
+            players.forEach(player => {
+                const pos = POSITIONS[player.position] || { left: '50%', top: '50%' };
+                const isHero = player.position === heroPosition;
+
+                const seat = document.createElement('div');
+                seat.className = `player-seat ${isHero ? 'hero' : ''} ${player.status === 'Active' ? 'active' : 'folded'}`;
+                seat.style.left = pos.left;
+                seat.style.top = pos.top;
+
+                seat.innerHTML = `
+                    <div class="position-label">${player.position}</div>
+                    <div class="stack-size">${(player.stack || 0).toFixed(1)}BB</div>
+                    ${player.is_dealer ? '<div class="dealer-button"></div>' : ''}
+                `;
+
+                playerSeats.appendChild(seat);
+            });
+        }
+
+        // Start connection
+        connectWebSocket();
+    </script>
+</body>
+
+</html>

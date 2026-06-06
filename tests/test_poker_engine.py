@@ -1,0 +1,244 @@
+"""Tests for the self-contained poker engine. Run: python -m pytest tests/ -q"""
+
+import random
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from itertools import combinations
+
+from poker.cards import make_card, full_deck
+from poker.equity import equity
+from poker.evaluator import evaluate, evaluate7, _score_5, category_name
+from poker.ranges import normalize_hand
+from poker.engine import Situation, decide
+from poker.simulator import run_session
+
+
+def cards(*ss):
+    return [make_card(s) for s in ss]
+
+
+# ---- evaluator ---------------------------------------------------------
+def test_royal_flush_beats_quads():
+    rf = evaluate(cards("Ah", "Kh", "Qh", "Jh", "Th"))
+    quads = evaluate(cards("As", "Ad", "Ac", "Ah", "Kh"))
+    assert rf > quads
+    assert category_name(rf) == "Straight Flush"
+    assert category_name(quads) == "Four of a Kind"
+
+
+def test_wheel_straight():
+    wheel = evaluate(cards("Ah", "2d", "3c", "4s", "5h"))
+    assert category_name(wheel) == "Straight"
+
+
+def test_full_house_over_flush():
+    fh = evaluate(cards("Ah", "As", "Ad", "Kh", "Ks"))
+    flush = evaluate(cards("2h", "5h", "8h", "Jh", "Kh"))
+    assert fh > flush
+
+
+def test_seven_card_picks_best():
+    score = evaluate(cards("Ah", "Kh", "Qh", "Jh", "Th", "2c", "3d"))
+    assert category_name(score) == "Straight Flush"
+
+
+def test_two_pair_kicker():
+    a = evaluate(cards("Ah", "As", "Kh", "Ks", "Qd"))
+    b = evaluate(cards("Ah", "As", "Kh", "Ks", "Jd"))
+    assert a > b
+
+
+def test_fast_evaluator_matches_bruteforce():
+    """evaluate7 must equal the combinatorial best-of-7 on random hands."""
+    rng = random.Random(0)
+    deck = full_deck()
+    for _ in range(3000):
+        rng.shuffle(deck)
+        hand = deck[:7]
+        brute = max(_score_5(c) for c in combinations(hand, 5))
+        assert evaluate7(hand) == brute
+
+
+# ---- equity ------------------------------------------------------------
+def test_aa_crushes_preflop():
+    rng = random.Random(42)
+    eq = equity(cards("As", "Ad"), opponents=1, iterations=2000, rng=rng)
+    assert eq > 0.8
+
+
+def test_dominated_hand_low_equity():
+    rng = random.Random(1)
+    eq = equity(cards("7c", "2d"), opponents=1, iterations=2000, rng=rng)
+    assert eq < 0.45
+
+
+def test_made_flush_high_equity():
+    rng = random.Random(7)
+    eq = equity(cards("Ah", "Kh"), board=cards("Qh", "7h", "2h"),
+                opponents=1, iterations=1500, rng=rng)
+    assert eq > 0.85
+
+
+# ---- ranges / engine ---------------------------------------------------
+def test_normalize_hand():
+    assert normalize_hand(make_card("As"), make_card("Ks")) == "AKs"
+    assert normalize_hand(make_card("Ks"), make_card("Ah")) == "AKo"
+    assert normalize_hand(make_card("Ad"), make_card("Ah")) == "AA"
+
+
+def test_engine_opens_premium():
+    s = Situation(hole=cards("As", "Ks"), board=[], position="BTN",
+                  street="preflop", pot=1.5, to_call=1.0, hero_stack=100)
+    d = decide(s)
+    assert d.action == "raise"
+
+
+def test_engine_folds_trash_utg():
+    s = Situation(hole=cards("7c", "2d"), board=[], position="UTG",
+                  street="preflop", pot=1.5, to_call=1.0, hero_stack=100)
+    d = decide(s)
+    assert d.action == "fold"
+
+
+def test_engine_postflop_value_bets_nuts():
+    rng = random.Random(3)
+    s = Situation(hole=cards("Ah", "Kh"), board=cards("Qh", "Jh", "Th"),
+                  position="BTN", street="flop", pot=10, to_call=0,
+                  hero_stack=100, rng=rng)
+    d = decide(s)
+    assert d.action == "raise"
+    assert d.equity > 0.8
+
+
+def test_engine_folds_to_bad_odds():
+    rng = random.Random(5)
+    s = Situation(hole=cards("7c", "2d"), board=cards("Ah", "Kd", "Qs"),
+                  position="BB", street="flop", pot=10, to_call=8,
+                  hero_stack=100, rng=rng)
+    d = decide(s)
+    assert d.action == "fold"
+
+
+# ---- simulator (rules integration) ------------------------------------
+def test_session_conserves_chips():
+    lineup = [("A", "engine"), ("B", "tag"), ("C", "station"), ("D", "rock")]
+    res = run_session(lineup, hands=200, seed=99, rebuy=False)
+    total_start = sum(r.start_stack for r in res.reports)
+    total_end = sum(r.end_stack for r in res.reports)
+    assert abs(total_start - total_end) < 1e-6  # no chips created/destroyed
+
+
+def test_session_runs_and_reports():
+    lineup = [("Hero", "engine"), ("Villain", "station")]
+    res = run_session(lineup, hands=300, seed=7)
+    assert res.hands > 0
+    rows = res.summary_rows()
+    assert len(rows) == 2
+    assert all("bb100" in r for r in rows)
+
+
+def test_engine_beats_station_long_run():
+    lineup = [("Engine", "engine"), ("Station", "station")]
+    res = run_session(lineup, hands=800, seed=123, rebuy=True)
+    by_name = {r.name: r for r in res.reports}
+    assert by_name["Engine"].net > by_name["Station"].net
+
+
+def test_engine_no_longer_punts_vs_tag():
+    """Regression for the all-in raise-war leak: engine must not get crushed."""
+    lineup = [("Engine", "engine"), ("Tag", "tag")]
+    res = run_session(lineup, hands=600, big_blind=1.0, start_stack=200, seed=1, rebuy=True)
+    by_name = {r.name: r for r in res.reports}
+    assert by_name["Engine"].net > -50 * 200  # not a catastrophic loss
+
+
+# ---- P2 range model ----------------------------------------------------
+def test_range_expansion_counts():
+    from poker.range_model import expand_range
+    assert len(expand_range(["AA"])) == 6
+    assert len(expand_range(["AKs"])) == 4
+    assert len(expand_range(["AKo"])) == 12
+    assert len(expand_range(["TT+"])) == 30   # TT,JJ,QQ,KK,AA × 6
+
+
+def test_equity_vs_range_orders_hands():
+    from poker.range_model import expand_range, equity_vs_range, STRONG_BETTING_RANGE
+    rng = random.Random(0)
+    vr = expand_range(STRONG_BETTING_RANGE)
+    aa = equity_vs_range(cards("As", "Ad"), vr, iterations=800, rng=rng)
+    trash = equity_vs_range(cards("7c", "2d"), vr, iterations=800, rng=rng)
+    assert aa > trash
+    assert aa > 0.7
+
+
+# ---- P3 profiling ------------------------------------------------------
+def test_profiling_classifies_station():
+    from poker.profiling import ProfileBook
+    book = ProfileBook()
+    lineup = [("Eng", "engine"), ("Sta", "station")]
+    res = run_session(lineup, hands=300, seed=5)
+    for h in res.history:
+        book.observe(h)
+    sta = book.get("Sta")
+    assert sta.vpip > 0.5          # station plays loose
+    assert sta.fold_freq < 0.2     # rarely folds
+
+
+# ---- P1 tournament + ICM ----------------------------------------------
+def test_icm_conserves_prize_pool():
+    from poker.tournament import icm_equity
+    eq = icm_equity({"A": 5000, "B": 3000, "C": 2000}, [50, 30, 20])
+    assert abs(sum(eq.values()) - 100) < 1e-6
+    assert eq["A"] > eq["B"] > eq["C"]   # bigger stack = more equity
+
+
+def test_tournament_has_single_winner():
+    from poker.tournament import run_tournament
+    res = run_tournament([("a", "engine"), ("b", "tag"), ("c", "station"), ("d", "rock")],
+                         start_stack=100, hands_per_level=15, prize_pool=100, seed=4)
+    assert len(res.finish_order) == 4
+    assert res.prizes[res.finish_order[0]] == 50.0
+    assert sum(res.prizes.values()) == 100.0
+
+
+# ---- P5 leak report ----------------------------------------------------
+def test_leak_report_per_position():
+    from poker.history import leak_report
+    res = run_session([("Hero", "engine"), ("V", "tag")], hands=300, seed=2)
+    rows = leak_report(res.history, "Hero", 1.0)
+    assert rows
+    assert all("net_bb" in r and "position" in r for r in rows)
+
+
+# ---- N2 vectorised evaluator / equity ---------------------------------
+def test_vectorised_evaluator_order_isomorphic():
+    """score7_batch must rank identically to the scalar evaluate7."""
+    import numpy as np
+    from poker.fast_equity import score7_batch, _CARD_INDEX
+    rng = random.Random(0)
+    deck = full_deck()
+    hands, idxs = [], []
+    for _ in range(4000):
+        rng.shuffle(deck)
+        h = deck[:7]
+        hands.append(h)
+        idxs.append([_CARD_INDEX[c] for c in h])
+    scores = score7_batch(np.array(idxs))
+    tuples = [evaluate7(h) for h in hands]
+    order = sorted(range(len(hands)), key=lambda i: tuples[i])
+    prev = -1
+    for i in order:
+        assert int(scores[i]) >= prev
+        prev = int(scores[i])
+
+
+def test_fast_equity_matches_scalar():
+    from poker.fast_equity import equity_fast
+    rng = random.Random(0)
+    for hole in (["As", "Ad"], ["Kh", "Qh"], ["7c", "2d"]):
+        scalar = equity(cards(*hole), opponents=2, iterations=4000, rng=rng)
+        fast = equity_fast(cards(*hole), opponents=2, iterations=40000, seed=1)
+        assert abs(scalar - fast) < 0.03   # same within Monte Carlo noise

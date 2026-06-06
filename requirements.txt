@@ -1,0 +1,23 @@
+# ── Virtual-chip poker engine (poker/, play.py) ───────────────────────
+# Pure standard library. No dependencies required to run the simulator,
+# auto-play, manual terminal play, the decision engine or the tests.
+
+# ── Graphical table + coach overlay (poker_gui.py) ────────────────────
+PyQt6>=6.5
+
+# ── Live screen-vision stack (main_poker_vision_gto.py, optional) ─────
+# Only needed for the camera/screen-capture poker reader, NOT for the
+# self-contained virtual game above.
+ultralytics>=8.0      # YOLO inference
+torch>=2.1            # MPS / CPU backend for YOLO
+easyocr>=1.7          # player name / stack OCR
+mss>=9.0              # screen capture
+opencv-python>=4.8    # image processing
+numpy>=1.24
+websockets>=12.0      # dashboard broadcast
+
+# ── Tests ─────────────────────────────────────────────────────────────
+pytest>=8.0
+
+# Note: hand_evaluator.py (legacy live path) uses `treys`; the new pure-python
+# poker/evaluator.py replaces it and needs nothing extra.

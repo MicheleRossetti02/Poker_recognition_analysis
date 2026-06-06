@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GTO Assistant - Real-Time</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0f1419;
+            color: white;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 20px;
+        }
+
+        /* Main Panel */
+        .main-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        /* Header */
+        .header {
+            background: #1a1f2e;
+            padding: 15px 25px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* HERO CARDS - BIG */
+        .hero-section {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a7b 100%);
+            padding: 30px;
+            border-radius: 12px;
+            border: 2px solid #3b82f6;
+        }
+
+        .hero-label {
+            font-size: 0.9em;
+            color: #93c5fd;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .hero-cards {
+            font-size: 5em;
+            font-weight: 900;
+            color: #60a5fa;
+            text-shadow: 0 0 20px rgba(96, 165, 250, 0.5);
+            margin-bottom: 10px;
+        }
+
+        .hero-hand-name {
+            font-size: 1.5em;
+            color: #93c5fd;
+        }
+
+        /* BOARD CARDS */
+        .board-section {
+            background: #1a1f2e;
+            padding: 20px;
+            border-radius: 12px;
+        }
+
+        .board-label {
+            font-size: 0.85em;
+            color: #9ca3af;
+            margin-bottom: 10px;
+        }
+
+        .board-cards {
+            font-size: 3em;
+            font-weight: bold;
+            color: white;
+        }
+
+        /* GTO RECOMMENDATION - HUGE AND PROMINENT */
+        .gto-section {
+            background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+            padding: 40px;
+            border-radius: 16px;
+            border: 4px solid #fbbf24;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(251, 191, 36, 0.3);
+        }
+
+        .gto-label {
+            font-size: 1.5em;
+            color: #fbbf24;
+            margin-bottom: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .gto-action {
+            font-size: 6em;
+            font-weight: 900;
+            padding: 30px;
+            border-radius: 16px;
+            margin: 20px 0;
+            text-transform: uppercase;
+        }
+
+        .gto-green {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            box-shadow: 0 10px 50px rgba(16, 185, 129, 0.5);
+        }
+
+        .gto-yellow {
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            color: #1f2937;
+            box-shadow: 0 10px 50px rgba(251, 191, 36, 0.5);
+        }
+
+        .gto-red {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            color: white;
+            box-shadow: 0 10px 50px rgba(239, 68, 68, 0.5);
+        }
+
+        .gto-gray {
+            background: #374151;
+            color: #9ca3af;
+        }
+
+        /* Game Info Bar */
+        .game-info {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+
+        .info-card {
+            background: #1a1f2e;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .info-label {
+            font-size: 0.8em;
+            color: #9ca3af;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 1.8em;
+            font-weight: bold;
+            color: white;
+        }
+
+        /* Side Panel - Stats */
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .stats-section {
+            background: #1a1f2e;
+            padding: 20px;
+            border-radius: 12px;
+        }
+
+        .stats-title {
+            font-size: 1.2em;
+            margin-bottom: 15px;
+            color: #fbbf24;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #374151;
+        }
+
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            color: #9ca3af;
+        }
+
+        .stat-value {
+            font-weight: bold;
+            color: white;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .tab {
+            padding: 10px 20px;
+            background: #374151;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .tab.active {
+            background: #fbbf24;
+            color: #1f2937;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <!-- Main Panel -->
+        <div class="main-panel">
+            <!-- Header -->
+            <div class="header">
+                <h1>🎯 GTO Poker Assistant</h1>
+                <div class="status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="statusText">Connessione...</span>
+                </div>
+            </div>
+
+            <!-- Hero Cards -->
+            <div class="hero-section">
+                <div class="hero-label">🎴 LE TUE CARTE</div>
+                <div class="hero-cards" id="heroCards">--</div>
+                <div class="hero-hand-name" id="heroHandName">In attesa...</div>
+            </div>
+
+            <!-- Board Cards -->
+            <div class="board-section">
+                <div class="board-label">🃏 BOARD</div>
+                <div class="board-cards" id="boardCards">--</div>
+            </div>
+
+            <!-- GTO RECOMMENDATION - MAIN FOCUS -->
+            <div class="gto-section">
+                <div class="gto-label">⚡ RACCOMANDAZIONE GTO</div>
+                <div class="gto-action gto-gray" id="gtoAction">
+                    Waiting...
+                </div>
+            </div>
+
+            <!-- Game Info -->
+            <div class="game-info">
+                <div class="info-card">
+                    <div class="info-label">Hand</div>
+                    <div class="info-value" id="handNum">#0</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-label">Street</div>
+                    <div class="info-value" id="street">-</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-label">Pot</div>
+                    <div class="info-value" id="pot">0 BB</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Side Panel -->
+        <div class="side-panel">
+            <!-- Tabs -->
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('live')">Live</div>
+                <div class="tab" onclick="switchTab('stats')">Statistiche</div>
+            </div>
+
+            <!-- Live Tab -->
+            <div id="liveTab" class="tab-content active">
+                <div class="stats-section">
+                    <div class="stats-title">⚡ Info Live</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Posizione</span>
+                        <span class="stat-value" id="posizione">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Stack</span>
+                        <span class="stat-value" id="stack">0 BB</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Giocatori Attivi</span>
+                        <span class="stat-value" id="activePlayers">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">High Bet</span>
+                        <span class="stat-value" id="highBet">0 BB</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stats Tab -->
+            <div id="statsTab" class="tab-content">
+                <div class="stats-section">
+                    <div class="stats-title">📊 Statistiche Sessione</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Mani Giocate</span>
+                        <span class="stat-value" id="handsPlayed">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Mani Vinte</span>
+                        <span class="stat-value" id="handsWon">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Win Rate</span>
+                        <span class="stat-value" id="winRate">0%</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">VPIP</span>
+                        <span class="stat-value" id="vpip">0%</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">PFR</span>
+                        <span class="stat-value" id="pfr">0%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let reconnectTimeout = null;
+
+        // UI Elements
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const heroCards = document.getElementById('heroCards');
+        const heroHandName = document.getElementById('heroHandName');
+        const boardCards = document.getElementById('boardCards');
+        const gtoAction = document.getElementById('gtoAction');
+        const handNum = document.getElementById('handNum');
+        const street = document.getElementById('street');
+        const pot = document.getElementById('pot');
+
+        // Tab switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+
+            if (tabName === 'live') {
+                document.querySelector('.tab:nth-child(1)').classList.add('active');
+                document.getElementById('liveTab').classList.add('active');
+            } else {
+                document.querySelector('.tab:nth-child(2)').classList.add('active');
+                document.getElementById('statsTab').classList.add('active');
+            }
+        }
+
+        function connectWebSocket() {
+            console.log('🔌 Connecting...');
+            ws = new WebSocket('ws://localhost:8765');
+
+            ws.onopen = () => {
+                console.log('✅ Connected');
+                statusDot.classList.remove('disconnected');
+                statusText.textContent = 'Connesso';
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('📡 Data:', data);
+                    updateUI(data);
+                } catch (err) {
+                    console.error('Parse error:', err);
+                }
+            };
+
+            ws.onerror = () => {
+                statusDot.classList.add('disconnected');
+                statusText.textContent = 'Errore';
+            };
+
+            ws.onclose = () => {
+                statusDot.classList.add('disconnected');
+                statusText.textContent = 'Riconnessione...';
+                clearTimeout(reconnectTimeout);
+                reconnectTimeout = setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function formatCard(card) {
+            if (!card || card.length < 2) return card;
+            const rank = card.slice(0, -1);
+            const suit = card.slice(-1);
+            const suitMap = {
+                'h': '♥', 'H': '♥',
+                'd': '♦', 'D': '♦',
+                'c': '♣', 'C': '♣',
+                's': '♠', 'S': '♠'
+            };
+            return rank + (suitMap[suit] || suit);
+        }
+
+        function updateUI(gameState) {
+            // Hero Cards
+            if (gameState.hero?.cards?.length >= 2) {
+                heroCards.textContent = gameState.hero.cards.map(formatCard).join('  ');
+                heroHandName.textContent = gameState.hero.hand || 'Unknown';
+            } else {
+                heroCards.textContent = '--';
+                heroHandName.textContent = 'In attesa carte...';
+            }
+
+            // Board Cards
+            if (gameState.board?.length > 0) {
+                boardCards.textContent = gameState.board.map(formatCard).join('  ');
+            } else {
+                boardCards.textContent = gameState.street === 'Preflop' ? 'Preflop' : '--';
+            }
+
+            // GTO RECOMMENDATION - MAIN FOCUS
+            const suggestion = gameState.gto_suggestion?.action || 'Waiting...';
+            gtoAction.textContent = suggestion;
+
+            // Set color
+            gtoAction.className = 'gto-action';
+            const upper = suggestion.toUpperCase();
+            if (upper.includes('RAISE') || upper.includes('BET')) {
+                gtoAction.classList.add('gto-green');
+            } else if (upper.includes('CALL')) {
+                gtoAction.classList.add('gto-yellow');
+            } else if (upper.includes('FOLD')) {
+                gtoAction.classList.add('gto-red');
+            } else {
+                gtoAction.classList.add('gto-gray');
+            }
+
+            // Game Info
+            handNum.textContent = '#' + (gameState.hand_id || 0);
+            street.textContent = gameState.street || 'Preflop';
+            pot.textContent = (gameState.pot || 0).toFixed(1) + ' BB';
+
+            // Live Stats
+            document.getElementById('posizione').textContent = gameState.hero?.position || '-';
+            document.getElementById('stack').textContent = (gameState.hero?.stack || 0).toFixed(1) + ' BB';
+            document.getElementById('activePlayers').textContent = gameState.players?.filter(p => p.status === 'Active').length || 0;
+            document.getElementById('highBet').textContent = (gameState.stats?.high_bet || 0).toFixed(1) + ' BB';
+        }
+
+        // Start
+        connectWebSocket();
+    </script>
+</body>
+
+</html>
