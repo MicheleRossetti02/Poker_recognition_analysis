@@ -242,3 +242,43 @@ def test_fast_equity_matches_scalar():
         scalar = equity(cards(*hole), opponents=2, iterations=4000, rng=rng)
         fast = equity_fast(cards(*hole), opponents=2, iterations=40000, seed=1)
         assert abs(scalar - fast) < 0.03   # same within Monte Carlo noise
+
+
+# ---- N4 persistence ----------------------------------------------------
+def test_store_roundtrip(tmp_path):
+    from poker.store import StatsStore
+    db = str(tmp_path / "s.db")
+    st = StatsStore(db)
+    res = run_session([("Eng", "engine"), ("Sta", "station")], hands=120, seed=1)
+    sid = st.save_session(res)
+    assert sid == 1
+    assert len(st.all_profiles()) == 2
+    assert st.get_profile("Sta")["hands"] > 0
+    assert len(st.session_history("Eng")) == 1
+    st.close()
+
+
+# ---- N6 arena ----------------------------------------------------------
+def test_arena_ranks_engine_high():
+    from poker.arena import round_robin
+    res = round_robin(["engine", "station", "rock"], hands=1500, seed=0, fast=True)
+    assert len(res.ranking) == 3
+    types = [r["type"] for r in res.ranking]
+    # engine should not finish last vs a station/rock field
+    assert types[-1] != "engine"
+
+
+# ---- N3 range equity ---------------------------------------------------
+def test_range_equity_toggle_folds_dominated():
+    from poker import engine as eng
+    from poker.engine import Situation, decide
+    prev = eng.USE_RANGE_EQUITY
+    eng.USE_RANGE_EQUITY = True
+    try:
+        s = Situation(hole=cards("Kd", "Qd"), board=cards("Ah", "7s", "2c"),
+                      position="BTN", street="flop", pot=10, to_call=8,
+                      hero_stack=100, rng=random.Random(1))
+        d = decide(s)
+        assert d.action == "fold"   # KQ high crushed by a betting range on A-high
+    finally:
+        eng.USE_RANGE_EQUITY = prev

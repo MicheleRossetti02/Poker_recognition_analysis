@@ -21,8 +21,12 @@ fully offline: the whole game lives in memory.
 | `poker/simulator.py` | Run N hands, BB/100 reports, profiles |
 | `poker/tournament.py` | Sit-&-Go: rising blinds, busts, payouts, **ICM** (P1) |
 | `poker/history.py` | Hand-history text + per-position leak report (P5) |
+| `poker/arena.py` | Round-robin ranking + engine param auto-tuning (N6) |
+| `poker/store.py` | SQLite persistence for profiles & sessions (N4) |
 | `play.py` | CLI: `auto`, `sim`, `tourney`, `play` (terminal, zero deps) |
-| `poker_gui.py` | PyQt6 graphical table + coach overlay (`--overlay` = floating HUD) |
+| `poker_gui.py` | PyQt6 table + coach overlay (`--overlay` HUD, `replay` mode N5) |
+| `model_viewer.py` | Visualise the trained YOLO model's detections on images (N7) |
+| `live_coach.py` | Adapter feeding the engine into the live-vision coach (M3) |
 | `tests/test_poker_engine.py` | 24 tests (evaluator, equity, engine, rules, side pots, ranges, ICM, leaks) |
 
 Stronger engine (P4): 3bet bluffs, value/semibluff/bluff-raise postflop, equity

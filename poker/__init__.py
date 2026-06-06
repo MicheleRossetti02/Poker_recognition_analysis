@@ -22,6 +22,8 @@ from .table import ActionView, Player, Table
 from .simulator import run_session, SessionResult
 from .tournament import run_tournament, icm_equity, TournamentResult
 from .history import leak_report, format_leak_report, write_history
+from .arena import round_robin, tune_engine
+from .store import StatsStore
 
 __all__ = [
     "Card", "Deck", "make_card",
@@ -34,4 +36,5 @@ __all__ = [
     "run_session", "SessionResult",
     "run_tournament", "icm_equity", "TournamentResult",
     "leak_report", "format_leak_report", "write_history",
+    "round_robin", "tune_engine", "StatsStore",
 ]

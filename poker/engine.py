@@ -47,6 +47,21 @@ def _rng(s) -> random.Random:
 # deterministic test-suite.
 USE_FAST_EQUITY = False
 
+# N3: when True, equity facing a bet is computed vs a *continuing range* rather
+# than vs a random hand, modelling that bettors hold stronger cards. More
+# accurate, a bit slower; off by default to keep the fast sims fast.
+USE_RANGE_EQUITY = False
+
+
+def _range_equity_vs_bettor(hole, board, rng):
+    """Equity vs a plausible value/betting range (N3). Falls back gracefully."""
+    try:
+        from .range_model import equity_vs_range, expand_range, STRONG_BETTING_RANGE
+        vr = expand_range(STRONG_BETTING_RANGE)
+        return equity_vs_range(hole, vr, board, iterations=800, rng=rng)
+    except Exception:
+        return None
+
 
 def _equity(hole, board, opponents, iterations, rng):
     if USE_FAST_EQUITY:
@@ -175,7 +190,14 @@ def _decide_postflop(s: Situation) -> Decision:
     # Facing a bet. Equity here is vs a RANDOM hand, but a player betting big
     # has a much stronger range, so we penalise relative to the bet size.
     commit_ratio = s.to_call / max(s.pot, s.big_blind)          # bet-to-pot
+    # N3: replace the flat penalty with real equity-vs-range when a big bet
+    # comes in (the spot where range disadvantage matters most).
     range_penalty = 0.13 * min(1.5, commit_ratio)               # villain stronger
+    if USE_RANGE_EQUITY and commit_ratio >= 0.5:
+        req = _range_equity_vs_bettor(s.hole, s.board, rng)
+        if req is not None:
+            eq = req                       # eq now already accounts for villain strength
+            range_penalty = 0.0
     oop_call_penalty = 0.03 if oop else 0.0                     # realise less OOP
     needed_call = pot_odds + range_penalty + CALL_MARGIN + oop_call_penalty
     needed_raise = value_threshold + 0.15 + 0.15 * min(1.5, commit_ratio)

@@ -361,13 +361,94 @@ class MainWindow(QWidget):
         e.accept()
 
 
+def record_session(lineup, bb, stack, hands, seed):
+    """Play a bot session and capture the full event stream for replay (N5)."""
+    rng = random.Random(seed)
+    players = [Player(f"P{i+1}_{a}", stack, ARCHETYPES[a]) for i, a in enumerate(lineup)]
+    events = []
+
+    def observer(payload):
+        if "board" in payload:
+            payload["board"] = [str(c) for c in payload["board"]]
+        payload["players"] = [{
+            "name": p.name, "stack": round(p.stack, 1), "position": p.position,
+            "hole": [str(c) for c in p.hole], "folded": p.folded,
+            "all_in": p.all_in, "is_hero": False,
+        } for p in players]
+        events.append(dict(payload))
+
+    table = Table(players, big_blind=bb, rng=rng, observer=observer)
+    for _ in range(hands):
+        if sum(1 for p in players if p.stack > 0) < 2:
+            for p in players:
+                p.stack = stack
+        table.play_hand()
+    return events
+
+
+class ReplayWindow(QWidget):
+    """Step forward/back through a recorded session (N5)."""
+
+    def __init__(self, events):
+        super().__init__()
+        self.setWindowTitle("Virtual Poker — replay")
+        self.events = events
+        self.idx = 0
+        self.table_w = TableWidget()
+        self.status = QLabel("")
+        self.status.setStyleSheet("color:#ddd;padding:4px;")
+
+        prev = QPushButton("◀ Prev")
+        nxt = QPushButton("Next ▶")
+        jump_hand = QPushButton("Next hand ⏭")
+        prev.clicked.connect(lambda: self.step(-1))
+        nxt.clicked.connect(lambda: self.step(1))
+        jump_hand.clicked.connect(self.next_hand)
+
+        ctl = QHBoxLayout()
+        ctl.addWidget(prev)
+        ctl.addWidget(nxt)
+        ctl.addWidget(jump_hand)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.table_w, 1)
+        lay.addWidget(self.status)
+        lay.addLayout(ctl)
+        self.render_to(0)
+
+    def render_to(self, i):
+        self.idx = max(0, min(i, len(self.events) - 1))
+        # Replay state from scratch up to idx so the board/last-actions are right.
+        self.table_w.state = {"players": [], "board": [], "pot": 0.0,
+                              "last": {}, "winners": {}, "showdown": {}}
+        for ev in self.events[: self.idx + 1]:
+            # only apply since last hand_start for a clean per-hand view
+            if ev.get("kind") == "hand_start":
+                self.table_w.state["last"] = {}
+                self.table_w.state["winners"] = {}
+                self.table_w.state["showdown"] = {}
+            self.table_w.apply_event(ev)
+        ev = self.events[self.idx]
+        self.status.setText(f"[{self.idx+1}/{len(self.events)}] hand {ev.get('hand_id')} "
+                            f"— {ev.get('kind')} {ev.get('player','')} {ev.get('action','')}")
+
+    def step(self, d):
+        self.render_to(self.idx + d)
+
+    def next_hand(self):
+        for j in range(self.idx + 1, len(self.events)):
+            if self.events[j].get("kind") == "hand_start":
+                self.render_to(j)
+                return
+        self.render_to(len(self.events) - 1)
+
+
 def _alist(text):
     return [a.strip() for a in text.split(",") if a.strip()]
 
 
 def main():
     ap = argparse.ArgumentParser(description="Virtual poker GUI (no real money).")
-    ap.add_argument("mode", choices=["watch", "play"])
+    ap.add_argument("mode", choices=["watch", "play", "replay"])
     ap.add_argument("--lineup", type=_alist, default=["engine", "tag", "station", "rock"])
     ap.add_argument("--villains", type=_alist, default=["tag", "station", "lag"])
     ap.add_argument("--bb", type=float, default=1.0)
@@ -385,8 +466,13 @@ def main():
             sys.exit(1)
 
     app = QApplication(sys.argv)
-    win = MainWindow(args.mode, args.lineup, args.villains, args.bb, args.stack,
-                     args.pace, args.hands, args.seed, overlay=args.overlay)
+    if args.mode == "replay":
+        events = record_session(args.lineup, args.bb, args.stack,
+                                max(1, args.hands or 5), args.seed)
+        win = ReplayWindow(events)
+    else:
+        win = MainWindow(args.mode, args.lineup, args.villains, args.bb, args.stack,
+                         args.pace, args.hands, args.seed, overlay=args.overlay)
     win.resize(900, 640)
     win.show()
     sys.exit(app.exec())
