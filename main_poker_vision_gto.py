@@ -20,6 +20,7 @@ from collections import deque
 from queue import Queue, Empty, Full
 from ultralytics import YOLO
 from gto_engine import get_action, normalize_hand
+from live_coach import live_decision, format_suggestion
 from hud_overlay import GTOOverlay
 from window_capture import WindowCapture
 from websocket_server import GameStateWebSocket, create_game_state_message
@@ -1697,24 +1698,30 @@ class PokerVisionPro:
                 suggestion = "Hero foldato - attesa nuova mano"
                 self.gto_suggestion = suggestion
                 self.last_gto_suggestion = suggestion
-            elif current_street != "Preflop":
-                suggestion = f"Postflop ({current_street}): assist in sviluppo, linea prudente"
-                self.gto_suggestion = suggestion
-                self.last_gto_suggestion = suggestion
             else:
                 opponent_actions = [
                     p.detected_action for p in active_players
                     if (not self._is_hero_player(p)) and p.detected_action
                 ]
+                num_opp = max(1, len([p for p in active_players if not self._is_hero_player(p)]))
+                hero_stack_bb = hero_state.bb_current if hero_state is not None else 100.0
                 try:
-                    suggestion = get_action(self.hero_position, self.hero_hand, opponent_actions or [])
+                    # M3: unified preflop+postflop advice from the strong engine
+                    # (postflop is now real equity/pot-odds, not a placeholder).
+                    decision = live_decision(
+                        self.hero_cards, self.game_state.get('board_cards', []),
+                        self.hero_position, current_street,
+                        self.game_state.get('pot', 0.0), self.high_bet_current_street,
+                        self.raises_count, hero_stack_bb, num_opp,
+                    )
+                    suggestion = format_suggestion(decision, self.hero_hand)
                     self.gto_suggestion = suggestion
                     self.last_gto_suggestion = suggestion
                 except Exception as e:
                     suggestion = f"{self.hero_hand} - CHECK"
                     self.gto_suggestion = suggestion
                     self.last_gto_suggestion = suggestion
-                    print(f"  ⚠️ GTO Error: {e}")
+                    print(f"  ⚠️ Engine Error: {e}")
         elif self.hero_hand and (not self.hero_position or self.hero_position == "?"):
             # Provide conservative fallback immediately while position is being resolved.
             opponent_actions = [
@@ -1722,18 +1729,24 @@ class PokerVisionPro:
                 if p.status == "Active" and p.detected_action and (not self._is_hero_player(p))
             ]
             try:
-                if current_street != "Preflop":
-                    conservative_action = "Postflop: linea prudente"
-                else:
-                    conservative_action = get_action("UTG", self.hero_hand, opponent_actions or [])
-                suggestion = f"{conservative_action} (provvisorio: posizione non rilevata)"
+                num_opp = max(1, len([
+                    p for p in current_players
+                    if p.status == "Active" and not self._is_hero_player(p)
+                ]))
+                decision = live_decision(
+                    self.hero_cards, self.game_state.get('board_cards', []),
+                    None, current_street,
+                    self.game_state.get('pot', 0.0), self.high_bet_current_street,
+                    self.raises_count, 100.0, num_opp,
+                )
+                suggestion = f"{format_suggestion(decision, self.hero_hand)} (provvisorio: posizione non rilevata)"
                 self.gto_suggestion = suggestion
                 self.last_gto_suggestion = suggestion
             except Exception as e:
                 suggestion = f"{self.hero_hand} - CHECK"
                 self.gto_suggestion = suggestion
                 self.last_gto_suggestion = suggestion
-                print(f"  ⚠️ GTO Error: {e}")
+                print(f"  ⚠️ Engine Error: {e}")
         elif not self.hero_position or self.hero_position == "?":
             suggestion = "Posizione non rilevata"
             self.gto_suggestion = suggestion
