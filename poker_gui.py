@@ -122,7 +122,7 @@ class TableWidget(QWidget):
         super().__init__()
         self.setMinimumSize(820, 560)
         self.state = {"players": [], "board": [], "pot": 0.0,
-                      "last": {}, "winners": {}, "showdown": {}}
+                      "last": {}, "winners": {}, "showdown": {}, "action_log": []}
         self.coach = None
 
     def apply_event(self, ev: dict):
@@ -137,11 +137,18 @@ class TableWidget(QWidget):
             self.state["last"] = {}
             self.state["winners"] = {}
             self.state["showdown"] = {}
+            self.state["action_log"] = [f"— hand #{ev.get('hand_id')} —"]
+        if kind == "street":
+            self.state.setdefault("action_log", []).append(
+                f"· {ev.get('street','').upper()} {' '.join(ev.get('board', []))}")
         if kind == "action":
             label = ev["action"].upper()
             if ev["action"] in ("call", "raise") and ev.get("amount"):
                 label += f" {ev['amount']:.1f}"
             self.state["last"][ev["player"]] = label
+            log = self.state.setdefault("action_log", [])
+            log.append(f"{ev.get('player','')[:10]} [{ev.get('position','?')}] {label}")
+            del log[:-12]   # keep last 12 lines
         if kind == "showdown":
             self.state["winners"] = ev.get("winners", {})
             self.state["showdown"] = ev.get("showdown", {})
@@ -184,6 +191,7 @@ class TableWidget(QWidget):
             py = cy + ry * math.sin(ang)
             self._draw_seat(p, pl, px, py)
 
+        self._draw_log(p, w, h)
         if self.coach:
             self._draw_coach(p, w, h)
 
@@ -235,20 +243,42 @@ class TableWidget(QWidget):
                 p.setPen(QPen(QColor(20, 30, 70), 1))
                 p.drawRoundedRect(r, 4, 4)
 
+    def _draw_log(self, p, w, h):
+        log = self.state.get("action_log", [])
+        if not log:
+            return
+        box = QRectF(w - 210, 12, 198, 12 + 15 * len(log))
+        p.setBrush(QBrush(QColor(15, 15, 18, 210)))
+        p.setPen(QPen(QColor(70, 70, 80), 1))
+        p.drawRoundedRect(box, 6, 6)
+        p.setFont(QFont("Menlo", 9))
+        for i, line in enumerate(log):
+            p.setPen(QColor(120, 200, 140) if line.startswith("—") else
+                     QColor(150, 180, 220) if line.startswith("·") else QColor(210, 210, 210))
+            p.drawText(QRectF(w - 204, 16 + i * 15, 186, 15),
+                       Qt.AlignmentFlag.AlignLeft, line)
+
     def _draw_coach(self, p, w, h):
         c = self.coach
-        box = QRectF(12, h - 92, 360, 80)
+        box = QRectF(12, h - 100, 380, 88)
         p.setBrush(QBrush(QColor(15, 15, 18, 235)))
         p.setPen(QPen(QColor(80, 200, 120), 2))
         p.drawRoundedRect(box, 8, 8)
         p.setPen(QColor(80, 220, 130))
         p.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         eq = f"{c['suggestion_equity']:.0%}" if c.get("suggestion_equity") else "n/a"
-        p.drawText(QRectF(22, h - 86, 340, 22), Qt.AlignmentFlag.AlignLeft,
+        p.drawText(QRectF(22, h - 96, 360, 22), Qt.AlignmentFlag.AlignLeft,
                    f"💡 COACH: {c['suggestion_label']}  (eq {eq}, conf {c['suggestion_conf']:.0%})")
-        p.setPen(QColor(210, 210, 210))
+        # pot odds line (N10)
+        to_call = c.get("to_call", 0.0) or 0.0
+        pot = c.get("pot", 0.0) or 0.0
+        odds = to_call / (pot + to_call) if to_call > 0 else 0.0
+        p.setPen(QColor(200, 200, 140))
         p.setFont(QFont("Arial", 10))
-        p.drawText(QRectF(22, h - 62, 340, 40), Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap,
+        p.drawText(QRectF(22, h - 74, 360, 16), Qt.AlignmentFlag.AlignLeft,
+                   f"pot {pot:.1f}  to call {to_call:.1f}  pot-odds {odds:.0%}")
+        p.setPen(QColor(210, 210, 210))
+        p.drawText(QRectF(22, h - 56, 360, 44), Qt.AlignmentFlag.AlignLeft | Qt.TextFlag.TextWordWrap,
                    c.get("suggestion_reason", ""))
 
 
@@ -442,13 +472,102 @@ class ReplayWindow(QWidget):
         self.render_to(len(self.events) - 1)
 
 
+class StatsWindow(QWidget):
+    """Charts from the SQLite store: net per player + bb/100 trend (N8)."""
+
+    def __init__(self, db_path):
+        super().__init__()
+        self.setWindowTitle("Virtual Poker — stats")
+        from poker.store import StatsStore
+        st = StatsStore(db_path)
+        self.profiles = st.all_profiles()
+        self.history = {p["name"]: st.session_history(p["name"]) for p in self.profiles}
+        st.close()
+        self.status = QLabel(f"{len(self.profiles)} players, "
+                             f"{sum(len(h) for h in self.history.values())} session rows")
+        self.status.setStyleSheet("color:#ddd;padding:4px;")
+        self.canvas = _StatsCanvas(self.profiles, self.history)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self.canvas, 1)
+        lay.addWidget(self.status)
+
+
+class _StatsCanvas(QWidget):
+    def __init__(self, profiles, history):
+        super().__init__()
+        self.profiles = profiles
+        self.history = history
+        self.setMinimumSize(820, 520)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        p.fillRect(self.rect(), QColor(25, 28, 32))
+        if not self.profiles:
+            p.setPen(QColor(220, 220, 220))
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                       "No data. Run: python play.py sim --save")
+            return
+
+        # Top half: cumulative net bb/100 trend per player (line chart).
+        top = QRectF(50, 20, w - 70, h / 2 - 40)
+        p.setPen(QColor(90, 90, 100))
+        p.drawRect(top)
+        all_vals = [r["bb100"] for hist in self.history.values() for r in hist]
+        lo = min(all_vals + [0.0])
+        hi = max(all_vals + [0.0])
+        span = (hi - lo) or 1.0
+        colors = [QColor(c) for c in ("#5ad17a", "#5aa0ff", "#ffcf5a", "#ff7a7a", "#c77aff", "#7affd1")]
+        for i, prof in enumerate(self.profiles[:6]):
+            hist = self.history.get(prof["name"], [])
+            if len(hist) < 1:
+                continue
+            col = colors[i % len(colors)]
+            p.setPen(QPen(col, 2))
+            n = max(1, len(hist) - 1)
+            pts = []
+            for j, r in enumerate(hist):
+                x = top.left() + top.width() * (j / n if n else 0)
+                y = top.bottom() - top.height() * ((r["bb100"] - lo) / span)
+                pts.append(QPointF(x, y))
+            for a, b in zip(pts, pts[1:]):
+                p.drawLine(a, b)
+            for pt in pts:
+                p.drawEllipse(pt, 3, 3)
+            p.drawText(QRectF(top.left() + 4, top.top() + 4 + i * 16, 200, 16),
+                       Qt.AlignmentFlag.AlignLeft, f"— {prof['name']} ({prof['style']})")
+        p.setPen(QColor(180, 180, 180))
+        p.drawText(QRectF(2, top.top(), 46, 16), Qt.AlignmentFlag.AlignRight, f"{hi:.0f}")
+        p.drawText(QRectF(2, top.bottom() - 16, 46, 16), Qt.AlignmentFlag.AlignRight, f"{lo:.0f}")
+        p.drawText(QRectF(top.left(), top.top() - 18, 300, 16),
+                   Qt.AlignmentFlag.AlignLeft, "bb/100 per session")
+
+        # Bottom half: VPIP bars per player.
+        bot = QRectF(50, h / 2 + 20, w - 70, h / 2 - 40)
+        p.setPen(QColor(180, 180, 180))
+        p.drawText(QRectF(bot.left(), bot.top() - 18, 300, 16),
+                   Qt.AlignmentFlag.AlignLeft, "VPIP % per player")
+        bw = bot.width() / max(1, len(self.profiles))
+        for i, prof in enumerate(self.profiles):
+            vpip = prof["vpip"]
+            bh = bot.height() * vpip
+            bar = QRectF(bot.left() + i * bw + 6, bot.bottom() - bh, bw - 12, bh)
+            p.fillRect(bar, colors[i % len(colors)])
+            p.setPen(QColor(230, 230, 230))
+            p.drawText(QRectF(bot.left() + i * bw, bot.bottom() + 2, bw, 16),
+                       Qt.AlignmentFlag.AlignCenter, prof["name"][:8])
+            p.drawText(QRectF(bot.left() + i * bw, bar.top() - 16, bw, 16),
+                       Qt.AlignmentFlag.AlignCenter, f"{vpip*100:.0f}%")
+
+
 def _alist(text):
     return [a.strip() for a in text.split(",") if a.strip()]
 
 
 def main():
     ap = argparse.ArgumentParser(description="Virtual poker GUI (no real money).")
-    ap.add_argument("mode", choices=["watch", "play", "replay"])
+    ap.add_argument("mode", choices=["watch", "play", "replay", "stats"])
     ap.add_argument("--lineup", type=_alist, default=["engine", "tag", "station", "rock"])
     ap.add_argument("--villains", type=_alist, default=["tag", "station", "lag"])
     ap.add_argument("--bb", type=float, default=1.0)
@@ -458,6 +577,7 @@ def main():
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--overlay", action="store_true",
                     help="frameless, always-on-top, translucent floating HUD")
+    ap.add_argument("--db", default="data/poker_stats.db", help="SQLite path for stats mode")
     args = ap.parse_args()
 
     for a in (args.lineup + args.villains):
@@ -466,7 +586,9 @@ def main():
             sys.exit(1)
 
     app = QApplication(sys.argv)
-    if args.mode == "replay":
+    if args.mode == "stats":
+        win = StatsWindow(args.db)
+    elif args.mode == "replay":
         events = record_session(args.lineup, args.bb, args.stack,
                                 max(1, args.hands or 5), args.seed)
         win = ReplayWindow(events)

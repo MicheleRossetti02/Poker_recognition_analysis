@@ -128,6 +128,63 @@ def equity_vs_range(
     return wins / iterations
 
 
+def equity_vs_ranges(
+    hole: Sequence[Card],
+    villain_ranges: Sequence[Sequence[tuple[Card, Card]]],
+    board: Sequence[Card] = (),
+    iterations: int = 1500,
+    rng: random.Random | None = None,
+) -> float:
+    """Hero equity vs several opponents, each drawn from its OWN range (N9).
+
+    More accurate multiway than equity-vs-random: each villain samples from a
+    distinct holding range. Combos clashing with hero/board/other villains are
+    re-drawn; ties split.
+    """
+    if len(hole) != 2:
+        raise ValueError("hole must be exactly 2 cards")
+    if not villain_ranges:
+        raise ValueError("need at least one villain range")
+    rng = rng or random.Random()
+    base_blocked = set(hole) | set(board)
+    board = list(board)
+    need_board = 5 - len(board)
+    wins = 0.0
+
+    for _ in range(iterations):
+        used = set(base_blocked)
+        opp_hands = []
+        ok = True
+        for vr in villain_ranges:
+            # try a few times to find a non-clashing combo
+            chosen = None
+            for _try in range(12):
+                cand = vr[rng.randrange(len(vr))]
+                if cand[0] in used or cand[1] in used or cand[0] == cand[1]:
+                    continue
+                chosen = cand
+                break
+            if chosen is None:
+                ok = False
+                break
+            used |= {chosen[0], chosen[1]}
+            opp_hands.append(chosen)
+        if not ok:
+            wins += 0.5
+            continue
+
+        deck = [c for c in full_deck() if c not in used]
+        rng.shuffle(deck)
+        run = board + deck[:need_board]
+        hero = evaluate(list(hole) + run)
+        best_opp = max(evaluate(list(oh) + run) for oh in opp_hands)
+        if hero > best_opp:
+            wins += 1.0
+        elif hero == best_opp:
+            wins += 0.5
+    return wins / iterations
+
+
 # A compact "strong betting range" used as a default continuing range when an
 # opponent commits a lot of chips (range disadvantage modelling).
 STRONG_BETTING_RANGE = [

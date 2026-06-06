@@ -65,6 +65,12 @@ def cmd_sim(args) -> None:
     if getattr(args, "history", None):
         write_history(res.history, args.history, args.bb)
         print(f"\nHand history written to {args.history}")
+    if getattr(args, "save", False):
+        from poker.store import StatsStore
+        st = StatsStore()
+        sid = st.save_session(res)
+        st.close()
+        print(f"\nSession #{sid} saved to data/poker_stats.db (view: poker_gui.py stats)")
 
 
 def cmd_tourney(args) -> None:
@@ -237,6 +243,7 @@ def main() -> None:
     s.add_argument("--profiles", action="store_true", help="show opponent profiles (P3)")
     s.add_argument("--leak", type=str, default=None, help="leak report for player/archetype (P5)")
     s.add_argument("--history", type=str, default=None, help="write hand history to file (P5)")
+    s.add_argument("--save", action="store_true", help="save session to SQLite (N4/N8)")
     s.set_defaults(func=cmd_sim)
 
     t = sub.add_parser("tourney", parents=[common], help="sit-n-go tournament (P1)")

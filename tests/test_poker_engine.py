@@ -174,6 +174,16 @@ def test_equity_vs_range_orders_hands():
     assert aa > 0.7
 
 
+def test_equity_vs_ranges_multiway():
+    from poker.range_model import expand_range, equity_vs_ranges
+    rng = random.Random(0)
+    tight = expand_range(["QQ+", "AKs", "AKo"])
+    aa = equity_vs_ranges(cards("As", "Ad"), [tight, tight], iterations=1000, rng=rng)
+    trash = equity_vs_ranges(cards("7c", "2d"), [tight, tight], iterations=1000, rng=rng)
+    assert aa > trash          # AA still ahead of two strong ranges
+    assert 0.5 < aa < 0.85     # but reduced multiway
+
+
 # ---- P3 profiling ------------------------------------------------------
 def test_profiling_classifies_station():
     from poker.profiling import ProfileBook

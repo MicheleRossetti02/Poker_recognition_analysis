@@ -54,10 +54,18 @@ python play.py tourney --lineup engine,adaptive,tag,station,rock,lag --prize 100
 # Terminal — YOU play, with coach + training grade
 python play.py play --villains tag,station,lag --train
 
+# Save sessions to SQLite, then view charts (N4/N8)
+python play.py sim --hands 2000 --lineup engine,tag,station --save
+venv/bin/python poker_gui.py stats
+
+# Visualise the trained model's detections (N7)
+python model_viewer.py --dir "Poker-GTO-Production databasev3/test/images" --limit 5
+
 # GUI — graphical table (PyQt6 is in ./venv on this machine)
-venv/bin/python poker_gui.py watch --lineup engine,tag,station,rock
-venv/bin/python poker_gui.py play  --villains tag,station,lag
-venv/bin/python poker_gui.py play  --villains tag,station --overlay   # floating HUD
+venv/bin/python poker_gui.py watch  --lineup engine,tag,station,rock   # table + action log
+venv/bin/python poker_gui.py play   --villains tag,station,lag         # coach + pot odds
+venv/bin/python poker_gui.py play   --villains tag,station --overlay   # floating HUD
+venv/bin/python poker_gui.py replay --lineup engine,tag,station --hands 6  # step through hands
 
 # Tests
 python -m pytest tests/ -q

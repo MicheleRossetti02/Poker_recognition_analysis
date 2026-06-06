@@ -1,0 +1,33 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'poker/**'
+      - 'tests/**'
+      - 'play.py'
+      - 'live_coach.py'
+      - '.github/workflows/tests.yml'
+  pull_request:
+    paths:
+      - 'poker/**'
+      - 'tests/**'
+      - 'play.py'
+      - 'live_coach.py'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test deps
+        # The poker engine is pure-stdlib; only numpy (vectorised equity) and
+        # pytest are needed for the test-suite. No torch / heavy vision deps.
+        run: pip install numpy pytest
+      - name: Run engine test-suite
+        run: python -m pytest tests/ -q
