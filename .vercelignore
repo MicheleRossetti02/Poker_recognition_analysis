@@ -1,0 +1,17 @@
+venv
+venv312
+.git
+data
+__pycache__
+**/__pycache__
+*.pt
+*.onnx
+Poker-GTO-Production databasev3
+POKER_GTO_BOT_V3
+poker_gto_dashboard
+test_results
+visual_test_results
+*.log
+tests
+tools
+legacy

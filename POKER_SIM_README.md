@@ -1,8 +1,18 @@
 # Virtual-Chip Poker — engine, simulator & coach overlay
 
 Self-contained No-Limit Texas Hold'em with **virtual chips only**. No real
-money, no gambling, no external poker client, no network. Built to be safe and
-fully offline: the whole game lives in memory.
+money, no gambling, no external poker client. Built to be safe and offline:
+the whole game lives in memory.
+
+## 🌐 Play in the browser (for friends — no install)
+
+**https://pokercoach-alpha.vercel.app**
+
+Open the link on any phone/computer. The full Python engine runs in the browser
+via Pyodide (WebAssembly) — nothing to install, no terminal, no account. Pick
+the bots, play with virtual chips, the coach suggests every move.
+
+To redeploy after engine changes: `python build_web.py && vercel deploy --prod --yes --cwd ./web`
 
 ## What's here
 

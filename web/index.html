@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Virtual Poker — chip finte</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="loader">
+    <div class="spinner"></div>
+    <div id="loadtext">Carico il motore di gioco…<br/><small>(prima volta ~15s)</small></div>
+  </div>
+
+  <div id="app" hidden>
+    <header>
+      <span class="brand">♠ Virtual Poker</span>
+      <span class="sub">chip finte · nessun soldo vero</span>
+      <button id="newgame" class="ghost">Nuova partita</button>
+    </header>
+
+    <main>
+      <section id="opponents"></section>
+
+      <section id="center">
+        <div id="board"></div>
+        <div id="pot">Piatto: 0</div>
+        <div id="message"></div>
+      </section>
+
+      <section id="hero">
+        <div id="hero-cards"></div>
+        <div id="hero-info"></div>
+      </section>
+
+      <section id="coach" hidden>
+        <div id="coach-line"></div>
+        <div id="coach-odds"></div>
+        <div id="coach-reason"></div>
+      </section>
+
+      <section id="controls" hidden>
+        <button id="btn-fold" class="act fold">Fold</button>
+        <button id="btn-call" class="act call">Check</button>
+        <div class="raisebox">
+          <button id="btn-raise" class="act raise">Rilancia a</button>
+          <input id="raise-amt" type="range" min="0" max="100" value="3" step="0.5" />
+          <span id="raise-val">3</span>
+        </div>
+        <button id="btn-coach" class="ghost small">Segui il coach</button>
+      </section>
+
+      <section id="nexthand" hidden>
+        <button id="btn-next" class="act next">Mano successiva ▶</button>
+      </section>
+    </main>
+
+    <div id="setup" class="modal" hidden>
+      <div class="card">
+        <h2>Nuova partita</h2>
+        <label>Avversari (bot)</label>
+        <select id="cfg-villains">
+          <option value="tag,station,lag">3 bot (facile)</option>
+          <option value="tag,station,lag,rock,engine">5 bot (pieno)</option>
+          <option value="station,station">2 bot calling station</option>
+          <option value="engine,engine,engine">3 bot forti</option>
+        </select>
+        <label>Stack iniziale (BB)</label>
+        <input id="cfg-stack" type="number" value="100" min="20" max="500" />
+        <button id="cfg-start" class="act next">Inizia</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.26.2/full/pyodide.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

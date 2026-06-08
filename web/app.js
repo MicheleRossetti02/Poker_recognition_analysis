@@ -1,0 +1,156 @@
+"use strict";
+
+// Python files to mount into the Pyodide virtual filesystem.
+const PY_FILES = [
+  "poker/__init__.py", "poker/cards.py", "poker/evaluator.py", "poker/equity.py",
+  "poker/ranges.py", "poker/range_model.py", "poker/profiling.py", "poker/engine.py",
+  "poker/table.py", "poker/simulator.py", "poker/tournament.py", "poker/history.py",
+  "poker/render.py", "poker/bots.py", "poker/arena.py", "poker/store.py",
+  "web_api.py",
+];
+
+const SUIT = { s: "♠", h: "♥", d: "♦", c: "♣" };
+const RED = new Set(["h", "d"]);
+
+let pyodide = null;
+let game = null;     // python WebGame proxy
+let state = null;
+
+async function boot() {
+  pyodide = await loadPyodide();
+  // create /app/poker and write files
+  pyodide.FS.mkdir("/app");
+  pyodide.FS.mkdir("/app/poker");
+  for (const f of PY_FILES) {
+    const txt = await (await fetch("py/" + f)).text();
+    pyodide.FS.writeFile("/app/" + f, txt);
+  }
+  pyodide.runPython("import sys; sys.path.insert(0, '/app')");
+  document.getElementById("loader").hidden = true;
+  document.getElementById("app").hidden = false;
+  bindUI();
+  openSetup();
+}
+
+function newGame(villains, stack) {
+  const py = pyodide.runPython(`
+import web_api
+_g = web_api.WebGame(villains=${JSON.stringify(villains.split(","))}, stack=${stack})
+_g
+`);
+  game = py;
+  nextHand();
+}
+
+function call(method, ...args) {
+  const argStr = args.map(a => JSON.stringify(a)).join(", ");
+  const res = pyodide.runPython(`import json; json.dumps(_g.${method}(${argStr}))`);
+  return JSON.parse(res);
+}
+
+function nextHand() { state = call("start_hand"); render(); }
+function submit(action, amount) { state = call("submit", action, amount); render(); }
+
+// ---- rendering --------------------------------------------------------
+function cardEl(cs, small) {
+  const d = document.createElement("div");
+  d.className = "pcard" + (small ? " sm" : "");
+  if (!cs) { d.classList.add("back"); d.textContent = ""; return d; }
+  const suit = cs[1].toLowerCase();
+  d.classList.add(RED.has(suit) ? "red" : "black");
+  d.textContent = cs[0] + (SUIT[suit] || "?");
+  return d;
+}
+
+function render() {
+  const winners = state.winners || {};
+  // opponents
+  const opp = document.getElementById("opponents");
+  opp.innerHTML = "";
+  for (const p of state.players) {
+    if (p.is_hero) continue;
+    const s = document.createElement("div");
+    s.className = "seat" + (p.folded ? " folded" : "") + (winners[p.name] ? " win" : "");
+    s.innerHTML = `<div class="nm">${p.name}</div><div class="pos">${p.position||""}</div>
+      <div class="stk">${p.stack} BB</div>
+      <div class="act">${winners[p.name] ? "▲ +" + winners[p.name] : ""}</div>`;
+    const cw = document.createElement("div");
+    cw.style.cssText = "display:flex;gap:4px;justify-content:center;margin-top:4px";
+    const holes = p.hole && p.hole.length ? p.hole : [null, null];
+    holes.forEach(c => cw.appendChild(cardEl(c, true)));
+    s.appendChild(cw);
+    opp.appendChild(s);
+  }
+  // board
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+  (state.board || []).forEach(c => board.appendChild(cardEl(c, false)));
+  document.getElementById("pot").textContent = "Piatto: " + (state.pot || 0) + " BB";
+
+  // hero
+  const hero = state.players.find(p => p.is_hero);
+  const hc = document.getElementById("hero-cards");
+  hc.innerHTML = "";
+  const hole = state.hero_hole || hero.hole || [];
+  (hole.length ? hole : [null, null]).forEach(c => hc.appendChild(cardEl(c, false)));
+  document.getElementById("hero-info").textContent =
+    `${hero.name} · ${hero.position || ""} · ${hero.stack} BB`;
+
+  const coach = document.getElementById("coach");
+  const controls = document.getElementById("controls");
+  const nexth = document.getElementById("nexthand");
+  const msg = document.getElementById("message");
+
+  if (state.need_action) {
+    msg.textContent = "";
+    coach.hidden = false; controls.hidden = false; nexth.hidden = true;
+    const c = state.coach, lg = state.legal;
+    document.getElementById("coach-line").textContent = "💡 Coach: " + c.label;
+    const odds = lg.to_call > 0 ? Math.round(100 * lg.to_call / (lg.pot + lg.to_call)) : 0;
+    document.getElementById("coach-odds").textContent =
+      `equity ${Math.round(c.equity*100)}% · da pagare ${lg.to_call} · pot-odds ${odds}%`;
+    document.getElementById("coach-reason").textContent = c.reason;
+
+    const callBtn = document.getElementById("btn-call");
+    callBtn.textContent = lg.can_check ? "Check" : ("Call " + lg.to_call);
+    const r = document.getElementById("raise-amt");
+    r.min = lg.min_raise_to; r.max = lg.max_raise_to;
+    let def = (c.action === "raise" && c.amount) ? c.amount : lg.min_raise_to;
+    r.value = Math.min(Math.max(def, lg.min_raise_to), lg.max_raise_to);
+    document.getElementById("raise-val").textContent = r.value;
+    document.getElementById("btn-raise").textContent = "Rilancia a";
+    // hide raise if not possible
+    document.querySelector(".raisebox").style.display =
+      (lg.max_raise_to > lg.min_raise_to) ? "flex" : "none";
+  } else {
+    coach.hidden = true; controls.hidden = true; nexth.hidden = false;
+    const wtxt = Object.entries(winners).map(([n, a]) => `${n} +${a}`).join(", ");
+    msg.textContent = wtxt ? ("Vince: " + wtxt) : "";
+  }
+}
+
+// ---- UI bindings ------------------------------------------------------
+function openSetup() { document.getElementById("setup").hidden = false; }
+
+function bindUI() {
+  document.getElementById("btn-fold").onclick = () => submit("fold", 0);
+  document.getElementById("btn-call").onclick = () => {
+    const lg = state.legal;
+    submit(lg.can_check ? "check" : "call", lg.to_call);
+  };
+  document.getElementById("btn-raise").onclick = () =>
+    submit("raise", parseFloat(document.getElementById("raise-amt").value));
+  document.getElementById("btn-coach").onclick = () =>
+    submit(state.coach.action, state.coach.amount);
+  document.getElementById("raise-amt").oninput = e =>
+    document.getElementById("raise-val").textContent = e.target.value;
+  document.getElementById("btn-next").onclick = () => nextHand();
+  document.getElementById("newgame").onclick = openSetup;
+  document.getElementById("cfg-start").onclick = () => {
+    document.getElementById("setup").hidden = true;
+    newGame(document.getElementById("cfg-villains").value,
+            parseFloat(document.getElementById("cfg-stack").value) || 100);
+  };
+}
+
+boot();
