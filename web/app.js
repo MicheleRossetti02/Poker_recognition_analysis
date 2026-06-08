@@ -179,4 +179,10 @@ function bindUI() {
   };
 }
 
+// PWA: register the service worker so the app is installable + works offline.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () =>
+    navigator.serviceWorker.register("sw.js").catch(() => {}));
+}
+
 boot();
