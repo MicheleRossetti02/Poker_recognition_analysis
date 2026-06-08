@@ -73,3 +73,6 @@ tournament_report_latest.md
 .bench_pid
 p95_p99_*.txt
 latency_*.txt
+
+# Generated machine-specific macOS app bundles
+apps/
