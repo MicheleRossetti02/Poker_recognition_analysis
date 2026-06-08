@@ -70,9 +70,15 @@ function thinking(on) {
 function defer(fn) {
   thinking(true);
   document.getElementById("controls").hidden = true;
-  requestAnimationFrame(() => requestAnimationFrame(() => {
+  let ran = false;
+  const run = () => {
+    if (ran) return;
+    ran = true;
     try { fn(); } catch (e) { document.getElementById("message").textContent = "Errore: " + e; }
-  }));
+  };
+  queueMicrotask(run);
+  requestAnimationFrame(() => requestAnimationFrame(run));
+  setTimeout(run, 80);
 }
 
 function nextHand() { defer(() => { state = call("start_hand"); render(); }); }

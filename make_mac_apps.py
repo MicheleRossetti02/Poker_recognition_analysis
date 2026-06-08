@@ -6,7 +6,8 @@ the needed dependencies and runs the right script. No PyInstaller, no multi-GB
 bundling — it reuses the project's existing virtualenvs.
 
 Run:  python make_mac_apps.py
-Output: apps/Virtual Poker.app  and  apps/Poker Coach Live.app
+Output: apps/Virtual Poker.app, apps/Poker Coach Overlay.app and
+apps/Poker Coach Live.app
 Then drag them to the Dock / Applications. First launch: right-click → Open
 (unsigned app, macOS Gatekeeper).
 """
@@ -67,9 +68,11 @@ def main():
     APPS.mkdir(exist_ok=True)
     a = make_app("Virtual Poker", "game", "poker_gui.py", "play --villains tag,station,lag",
                  "PyQt6, numpy")
+    o = make_app("Poker Coach Overlay", "overlay", "coach_overlay_app.py", "",
+                 "PyQt6")
     b = make_app("Poker Coach Live", "coach", "main_poker_vision_gto.py", "",
                  "torch, ultralytics, PyQt6")
-    print(f"Created:\n  {a}\n  {b}")
+    print(f"Created:\n  {a}\n  {o}\n  {b}")
     print("\nDrag them to /Applications or the Dock.")
     print("First launch: right-click the app -> Open (unsigned).")
 

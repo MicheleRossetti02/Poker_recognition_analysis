@@ -344,3 +344,16 @@ def test_web_coach_payload_includes_didactic_insights():
     assert "flush draw" in coach["insights"]["draws"]
     assert coach["insights"]["outs"]["count"] >= 9
     assert coach["insights"]["equity_breakdown"]["win_pct"] >= 0.0
+
+
+def test_manual_overlay_advice_uses_engine_without_pyqt():
+    from coach_overlay_app import OverlaySpot, compute_overlay_advice
+
+    payload = compute_overlay_advice(
+        OverlaySpot(hero_cards="Ah Kh", board_cards="Qh 7c 2h",
+                    street="flop", pot_bb=6, to_call_bb=2, stack_bb=98)
+    )
+    assert payload["label"]
+    assert payload["made_hand"] == "High Card"
+    assert "flush draw" in payload["draws"]
+    assert payload["outs"] >= 9

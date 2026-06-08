@@ -74,7 +74,7 @@ def _outs_to_improve(hole: Sequence[Card], board: Sequence[Card]) -> list[Card]:
     current = evaluate(list(hole) + list(board))
     outs = []
     for card in _available_cards(hole, board):
-        if evaluate(list(hole) + list(board) + [card]) > current:
+        if evaluate(list(hole) + list(board) + [card])[0] > current[0]:
             outs.append(card)
     return outs
 
@@ -85,14 +85,14 @@ def _improve_by_river_pct(hole: Sequence[Card], board: Sequence[Card]) -> float:
     current = evaluate(list(hole) + list(board))
     available = _available_cards(hole, board)
     if len(board) == 4:
-        hits = sum(1 for card in available if evaluate(list(hole) + list(board) + [card]) > current)
+        hits = sum(1 for card in available if evaluate(list(hole) + list(board) + [card])[0] > current[0])
         return hits / len(available) if available else 0.0
 
     total = 0
     hits = 0
     for c1, c2 in combinations(available, 2):
         total += 1
-        if evaluate(list(hole) + list(board) + [c1, c2]) > current:
+        if evaluate(list(hole) + list(board) + [c1, c2])[0] > current[0]:
             hits += 1
     return hits / total if total else 0.0
 

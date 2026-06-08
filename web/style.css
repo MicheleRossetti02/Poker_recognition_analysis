@@ -5,6 +5,7 @@
   --panel:#161a20; --line:#2a3038; --text:#e8eaed; --muted:#9aa3ad;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
 

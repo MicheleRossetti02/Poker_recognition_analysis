@@ -76,6 +76,7 @@ venv/bin/python poker_gui.py watch  --lineup engine,tag,station,rock   # table +
 venv/bin/python poker_gui.py play   --villains tag,station,lag         # coach + pot odds
 venv/bin/python poker_gui.py play   --villains tag,station --overlay   # floating HUD
 venv/bin/python poker_gui.py replay --lineup engine,tag,station --hands 6  # step through hands
+venv/bin/python coach_overlay_app.py  # always-on-top manual coach for live testing
 
 # Tests
 python -m pytest tests/ -q
