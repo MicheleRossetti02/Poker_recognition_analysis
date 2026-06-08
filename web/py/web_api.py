@@ -18,6 +18,7 @@ from __future__ import annotations
 import random
 
 from poker.bots import ARCHETYPES
+from poker.coach import coach_insights
 from poker.engine import decide
 from poker.bots import _to_situation
 from poker.table import ActionView, Player, Table
@@ -99,11 +100,38 @@ class WebGame:
         if v is None:
             return None
         d = decide(_to_situation(v))
-        return {
+        insights = coach_insights(
+            v.hole,
+            v.board,
+            opponents=max(1, v.num_active_opponents),
+            facing_raise=v.facing_raise,
+            iterations=220,
+            rng=random.Random(self._hand_seed + len(self._human_queue) + 97),
+        )
+        payload = {
             "action": d.action, "amount": round(d.amount, 1),
             "label": d.label(), "reason": d.reason,
             "equity": round(d.equity, 3), "confidence": round(d.confidence, 2),
+            "insights": {
+                "made_hand": insights["made_hand"],
+                "draws": insights["draws"],
+                "outs": {
+                    "count": insights["outs"]["count"],
+                    "next_card_pct": round(insights["outs"]["next_card_pct"], 3),
+                    "by_river_pct": round(insights["outs"]["by_river_pct"], 3),
+                },
+                "equity_breakdown": {
+                    "win_pct": round(insights["equity_breakdown"]["win_pct"], 3),
+                    "tie_pct": round(insights["equity_breakdown"]["tie_pct"], 3),
+                    "lose_pct": round(insights["equity_breakdown"]["lose_pct"], 3),
+                },
+            },
         }
+        if "heads_up_equity" in insights:
+            payload["insights"]["heads_up_equity"] = round(insights["heads_up_equity"], 3)
+        if "vs_betting_range_equity" in insights:
+            payload["insights"]["vs_betting_range_equity"] = round(insights["vs_betting_range_equity"], 3)
+        return payload
 
     def _legal(self):
         v = self._pending_view

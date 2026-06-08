@@ -52,6 +52,10 @@ main{flex:1;display:flex;flex-direction:column;padding:14px;gap:14px}
 #coach-line{font-weight:800;color:var(--accent);font-size:16px}
 #coach-odds{color:var(--warn);font-size:13px;margin:3px 0}
 #coach-reason{color:var(--muted);font-size:13px}
+#coach-made,#coach-outs,#coach-breakdown{font-size:13px;margin-top:4px}
+#coach-made{color:var(--text)}
+#coach-outs{color:var(--accent2)}
+#coach-breakdown{color:var(--muted)}
 
 #controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center}
 .act{border:none;border-radius:12px;padding:14px 18px;font-size:16px;font-weight:800;

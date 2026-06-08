@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from itertools import combinations
 
 from poker.cards import make_card, full_deck
+from poker.coach import coach_insights, equity_breakdown
 from poker.equity import equity
 from poker.evaluator import evaluate, evaluate7, _score_5, category_name
 from poker.ranges import normalize_hand
@@ -80,6 +81,30 @@ def test_made_flush_high_equity():
     eq = equity(cards("Ah", "Kh"), board=cards("Qh", "7h", "2h"),
                 opponents=1, iterations=1500, rng=rng)
     assert eq > 0.85
+
+
+def test_coach_insights_reports_flush_draw_and_outs():
+    info = coach_insights(
+        cards("Ah", "Kh"),
+        cards("Qh", "7c", "2h"),
+        opponents=2,
+        iterations=120,
+        rng=random.Random(9),
+    )
+    assert info["made_hand"] == "High Card"
+    assert "flush draw" in info["draws"]
+    assert info["outs"]["count"] >= 9
+    assert info["outs"]["next_card_pct"] > 0.15
+    assert info["outs"]["by_river_pct"] >= info["outs"]["next_card_pct"]
+    assert info["heads_up_equity"] > info["equity_breakdown"]["equity"]
+
+
+def test_equity_breakdown_is_normalized():
+    bd = equity_breakdown(cards("As", "Ad"), board=cards("7h", "2c", "9d"),
+                          opponents=2, iterations=150, rng=random.Random(4))
+    total = bd["win_pct"] + bd["tie_pct"] + bd["lose_pct"]
+    assert 0.99 <= total <= 1.01
+    assert 0.0 <= bd["equity"] <= 1.0
 
 
 # ---- ranges / engine ---------------------------------------------------
@@ -292,3 +317,30 @@ def test_range_equity_toggle_folds_dominated():
         assert d.action == "fold"   # KQ high crushed by a betting range on A-high
     finally:
         eng.USE_RANGE_EQUITY = prev
+
+
+def test_web_coach_payload_includes_didactic_insights():
+    from web_api import WebGame
+    from poker.table import ActionView
+
+    game = WebGame(villains=["tag"], seed=7)
+    game._pending_view = ActionView(
+        hole=cards("Ah", "Kh"),
+        board=cards("Qh", "7c", "2h"),
+        position="BTN",
+        street="flop",
+        pot=6.0,
+        to_call=2.0,
+        min_raise=2.0,
+        hero_stack=98.0,
+        big_blind=1.0,
+        num_active_opponents=1,
+        facing_raise=True,
+        street_invested=0.0,
+        rng=random.Random(1),
+    )
+    coach = game._coach()
+    assert coach["insights"]["made_hand"] == "High Card"
+    assert "flush draw" in coach["insights"]["draws"]
+    assert coach["insights"]["outs"]["count"] >= 9
+    assert coach["insights"]["equity_breakdown"]["win_pct"] >= 0.0

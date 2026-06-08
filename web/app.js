@@ -5,6 +5,7 @@ const PY_FILES = [
   "poker/__init__.py", "poker/cards.py", "poker/evaluator.py", "poker/equity.py",
   "poker/ranges.py", "poker/range_model.py", "poker/profiling.py", "poker/engine.py",
   "poker/table.py", "poker/simulator.py", "poker/tournament.py", "poker/history.py",
+  "poker/coach.py",
   "poker/render.py", "poker/bots.py", "poker/arena.py",
   "poker/fast_equity.py", "web_api.py",
 ];
@@ -131,11 +132,30 @@ function render() {
     msg.textContent = "";
     coach.hidden = false; controls.hidden = false; nexth.hidden = true;
     const c = state.coach, lg = state.legal;
+    const insights = c.insights || {};
+    const outs = insights.outs || {};
+    const eqb = insights.equity_breakdown || {};
     document.getElementById("coach-line").textContent = "💡 Coach: " + c.label;
     const odds = lg.to_call > 0 ? Math.round(100 * lg.to_call / (lg.pot + lg.to_call)) : 0;
     document.getElementById("coach-odds").textContent =
       `equity ${Math.round(c.equity*100)}% · da pagare ${lg.to_call} · pot-odds ${odds}%`;
     document.getElementById("coach-reason").textContent = c.reason;
+    document.getElementById("coach-made").textContent =
+      `mano attuale: ${insights.made_hand || "n/d"}${(insights.draws || []).length ? " · draw: " + insights.draws.join(", ") : ""}`;
+    document.getElementById("coach-outs").textContent =
+      `outs per migliorare: ${outs.count || 0} · prossima carta ${Math.round((outs.next_card_pct || 0)*100)}% · entro river ${Math.round((outs.by_river_pct || 0)*100)}%`;
+    const breakdownBits = [
+      `win ${Math.round((eqb.win_pct || 0) * 100)}%`,
+      `tie ${Math.round((eqb.tie_pct || 0) * 100)}%`,
+      `lose ${Math.round((eqb.lose_pct || 0) * 100)}%`,
+    ];
+    if (insights.heads_up_equity) {
+      breakdownBits.push(`HU ${Math.round(insights.heads_up_equity * 100)}%`);
+    }
+    if (insights.vs_betting_range_equity) {
+      breakdownBits.push(`vs range forte ${Math.round(insights.vs_betting_range_equity * 100)}%`);
+    }
+    document.getElementById("coach-breakdown").textContent = breakdownBits.join(" · ");
 
     const callBtn = document.getElementById("btn-call");
     callBtn.textContent = lg.can_check ? "Check" : ("Call " + lg.to_call);
