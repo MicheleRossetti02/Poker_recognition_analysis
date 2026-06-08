@@ -22,8 +22,15 @@ from .table import ActionView, Player, Table
 from .simulator import run_session, SessionResult
 from .tournament import run_tournament, icm_equity, TournamentResult
 from .history import leak_report, format_leak_report, write_history
-from .arena import round_robin, tune_engine
-from .store import StatsStore
+try:  # arena needs only stdlib; keep optional for minimal environments
+    from .arena import round_robin, tune_engine
+except Exception:  # pragma: no cover
+    round_robin = tune_engine = None
+
+try:  # store needs sqlite3 (absent in some WASM/Pyodide builds)
+    from .store import StatsStore
+except Exception:  # pragma: no cover
+    StatsStore = None
 
 __all__ = [
     "Card", "Deck", "make_card",

@@ -5,8 +5,8 @@ const PY_FILES = [
   "poker/__init__.py", "poker/cards.py", "poker/evaluator.py", "poker/equity.py",
   "poker/ranges.py", "poker/range_model.py", "poker/profiling.py", "poker/engine.py",
   "poker/table.py", "poker/simulator.py", "poker/tournament.py", "poker/history.py",
-  "poker/render.py", "poker/bots.py", "poker/arena.py", "poker/store.py",
-  "web_api.py",
+  "poker/render.py", "poker/bots.py", "poker/arena.py",
+  "poker/fast_equity.py", "web_api.py",
 ];
 
 const SUIT = { s: "♠", h: "♥", d: "♦", c: "♣" };
@@ -17,8 +17,13 @@ let game = null;     // python WebGame proxy
 let state = null;
 
 async function boot() {
+  const lt = document.getElementById("loadtext");
   pyodide = await loadPyodide();
-  // create /app/poker and write files
+  if (lt) lt.innerHTML = "Carico il motore veloce…<br/><small>(numpy)</small>";
+  // numpy enables the vectorised equity path -> snappy bots in the browser.
+  let fast = false;
+  try { await pyodide.loadPackage("numpy"); fast = true; } catch (e) { fast = false; }
+
   pyodide.FS.mkdir("/app");
   pyodide.FS.mkdir("/app/poker");
   for (const f of PY_FILES) {
@@ -26,6 +31,12 @@ async function boot() {
     pyodide.FS.writeFile("/app/" + f, txt);
   }
   pyodide.runPython("import sys; sys.path.insert(0, '/app')");
+  // turn on the fast equity path and keep iteration counts web-friendly
+  pyodide.runPython(`
+import poker.engine as _e
+_e.USE_FAST_EQUITY = ${fast ? "True" : "False"}
+_e.EQUITY_ITERS = 400
+`);
   document.getElementById("loader").hidden = true;
   document.getElementById("app").hidden = false;
   bindUI();
@@ -48,8 +59,23 @@ function call(method, ...args) {
   return JSON.parse(res);
 }
 
-function nextHand() { state = call("start_hand"); render(); }
-function submit(action, amount) { state = call("submit", action, amount); render(); }
+function thinking(on) {
+  const m = document.getElementById("message");
+  if (on) { m.textContent = "🤖 i bot pensano…"; }
+}
+
+// Run a (blocking) python step after letting the browser repaint first, so the
+// UI never looks frozen during equity computation.
+function defer(fn) {
+  thinking(true);
+  document.getElementById("controls").hidden = true;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    try { fn(); } catch (e) { document.getElementById("message").textContent = "Errore: " + e; }
+  }));
+}
+
+function nextHand() { defer(() => { state = call("start_hand"); render(); }); }
+function submit(action, amount) { defer(() => { state = call("submit", action, amount); render(); }); }
 
 // ---- rendering --------------------------------------------------------
 function cardEl(cs, small) {

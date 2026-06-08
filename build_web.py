@@ -12,7 +12,7 @@ DST = ROOT / "web" / "py"
 POKER_MODULES = [
     "__init__", "cards", "evaluator", "equity", "ranges", "range_model",
     "profiling", "engine", "table", "simulator", "tournament", "history",
-    "render", "bots", "arena", "store",
+    "render", "bots", "arena", "fast_equity",
 ]
 
 def main():
