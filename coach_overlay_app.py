@@ -15,7 +15,10 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 
 from poker.cards import make_card
 from poker.coach import coach_insights
@@ -24,6 +27,7 @@ from poker.engine import Situation, decide
 
 POSITIONS = ["UTG", "MP", "CO", "BTN", "SB", "BB"]
 STREETS = ["preflop", "flop", "turn", "river"]
+DEFAULT_CAPTURE_ROOT = Path("dataset/raw")
 
 
 @dataclass
@@ -37,6 +41,53 @@ class OverlaySpot:
     stack_bb: float = 100.0
     opponents: int = 1
     big_blind: float = 1.0
+
+
+@dataclass
+class CaptureRegion:
+    x: int = 0
+    y: int = 0
+    width: int = 960
+    height: int = 640
+    source: str = "manual"
+
+
+def create_capture_session(root: Path = DEFAULT_CAPTURE_ROOT) -> Path:
+    session = root / f"overlay_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    (session / "images").mkdir(parents=True, exist_ok=True)
+    return session
+
+
+def capture_metadata(
+    filename: str,
+    region: CaptureRegion,
+    spot: OverlaySpot,
+    advice: dict[str, object] | None,
+    mode: str,
+) -> dict[str, object]:
+    return {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "filename": filename,
+        "mode": mode,
+        "region": {
+            "x": region.x,
+            "y": region.y,
+            "width": region.width,
+            "height": region.height,
+            "source": region.source,
+        },
+        "spot": {
+            "hero_cards": spot.hero_cards,
+            "board_cards": spot.board_cards,
+            "position": spot.position,
+            "street": spot.street,
+            "pot_bb": spot.pot_bb,
+            "to_call_bb": spot.to_call_bb,
+            "stack_bb": spot.stack_bb,
+            "opponents": spot.opponents,
+        },
+        "advice": advice or {},
+    }
 
 
 def _parse_card_text(text: str):
@@ -113,9 +164,10 @@ def _format_payload(payload: dict[str, object]) -> str:
 
 
 def run_app():
-    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import Qt, QTimer
     from PyQt6.QtWidgets import (
         QApplication,
+        QCheckBox,
         QComboBox,
         QDoubleSpinBox,
         QGridLayout,
@@ -139,6 +191,11 @@ def run_app():
             )
             self.setWindowOpacity(0.94)
             self.setMinimumWidth(430)
+            self.capture_session = create_capture_session()
+            self.capture_count = 0
+            self.last_payload = None
+            self.auto_timer = QTimer(self)
+            self.auto_timer.timeout.connect(lambda: self.capture_screen("auto"))
 
             self.hero = QLineEdit("As Kh")
             self.board = QLineEdit("")
@@ -161,6 +218,22 @@ def run_app():
             self.opponents = QSpinBox()
             self.opponents.setRange(1, 5)
             self.opponents.setValue(1)
+            self.capture_x = QSpinBox()
+            self.capture_x.setRange(-10000, 10000)
+            self.capture_y = QSpinBox()
+            self.capture_y.setRange(-10000, 10000)
+            self.capture_w = QSpinBox()
+            self.capture_w.setRange(100, 10000)
+            self.capture_w.setValue(960)
+            self.capture_h = QSpinBox()
+            self.capture_h.setRange(100, 10000)
+            self.capture_h.setValue(640)
+            self.capture_interval = QDoubleSpinBox()
+            self.capture_interval.setRange(0.5, 60)
+            self.capture_interval.setValue(2.0)
+            self.capture_interval.setDecimals(1)
+            self.include_overlay = QCheckBox("Includi overlay nello screenshot")
+            self.include_overlay.setChecked(False)
 
             form = QGridLayout()
             form.addWidget(QLabel("Hero"), 0, 0)
@@ -180,16 +253,42 @@ def run_app():
             form.addWidget(QLabel("Opp"), 7, 0)
             form.addWidget(self.opponents, 7, 1)
 
+            capture_form = QGridLayout()
+            capture_form.addWidget(QLabel("X"), 0, 0)
+            capture_form.addWidget(self.capture_x, 0, 1)
+            capture_form.addWidget(QLabel("Y"), 0, 2)
+            capture_form.addWidget(self.capture_y, 0, 3)
+            capture_form.addWidget(QLabel("W"), 1, 0)
+            capture_form.addWidget(self.capture_w, 1, 1)
+            capture_form.addWidget(QLabel("H"), 1, 2)
+            capture_form.addWidget(self.capture_h, 1, 3)
+            capture_form.addWidget(QLabel("Auto s"), 2, 0)
+            capture_form.addWidget(self.capture_interval, 2, 1)
+            capture_form.addWidget(self.include_overlay, 2, 2, 1, 2)
+
             self.result = QLabel("Pronto.")
             self.result.setWordWrap(True)
             self.result.setStyleSheet("font-weight:700;color:#e8eaed;padding:8px;")
+            self.capture_status = QLabel(f"Dataset: {self.capture_session}")
+            self.capture_status.setWordWrap(True)
+            self.capture_status.setStyleSheet("color:#9aa3ad;padding:4px;")
             calc = QPushButton("Calcola")
             demo = QPushButton("Demo draw")
+            lock_window = QPushButton("Aggancia finestra poker")
+            screenshot = QPushButton("Screenshot")
+            self.auto_btn = QPushButton("Auto OFF")
             calc.clicked.connect(self.calculate)
             demo.clicked.connect(self.load_demo)
+            lock_window.clicked.connect(self.lock_poker_window)
+            screenshot.clicked.connect(lambda: self.capture_screen("manual"))
+            self.auto_btn.clicked.connect(self.toggle_auto_capture)
             buttons = QHBoxLayout()
             buttons.addWidget(calc)
             buttons.addWidget(demo)
+            capture_buttons = QHBoxLayout()
+            capture_buttons.addWidget(lock_window)
+            capture_buttons.addWidget(screenshot)
+            capture_buttons.addWidget(self.auto_btn)
 
             layout = QVBoxLayout(self)
             title = QLabel("Poker Coach Overlay")
@@ -198,6 +297,10 @@ def run_app():
             layout.addLayout(form)
             layout.addLayout(buttons)
             layout.addWidget(self.result)
+            layout.addWidget(QLabel("Cattura dataset"))
+            layout.addLayout(capture_form)
+            layout.addLayout(capture_buttons)
+            layout.addWidget(self.capture_status)
             self.setStyleSheet("""
                 QWidget { background:#161a20; color:#e8eaed; font-size:13px; }
                 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
@@ -223,10 +326,21 @@ def run_app():
                 opponents=self.opponents.value(),
             )
 
+        def region(self, source="manual"):
+            return CaptureRegion(
+                x=self.capture_x.value(),
+                y=self.capture_y.value(),
+                width=self.capture_w.value(),
+                height=self.capture_h.value(),
+                source=source,
+            )
+
         def calculate(self):
             try:
-                self.result.setText(_format_payload(compute_overlay_advice(self.spot())))
+                self.last_payload = compute_overlay_advice(self.spot())
+                self.result.setText(_format_payload(self.last_payload))
             except Exception as exc:
+                self.last_payload = None
                 self.result.setText(f"Errore: {exc}")
 
         def load_demo(self):
@@ -239,6 +353,73 @@ def run_app():
             self.stack.setValue(98.0)
             self.opponents.setValue(1)
             self.calculate()
+
+        def lock_poker_window(self):
+            try:
+                from window_capture import WindowCapture
+
+                capture = WindowCapture(allow_fullscreen_fallback=False)
+                bounds = capture.get_current_bounds()
+                if not bounds:
+                    self.capture_status.setText("Nessuna finestra poker trovata. Usa coordinate manuali.")
+                    return
+                self.capture_x.setValue(int(bounds["x"]))
+                self.capture_y.setValue(int(bounds["y"]))
+                self.capture_w.setValue(int(bounds["width"]))
+                self.capture_h.setValue(int(bounds["height"]))
+                self.move(int(bounds["x"]) + 20, int(bounds["y"]) + 20)
+                name = capture.current_window[1] if capture.current_window else "poker"
+                self.capture_status.setText(f"Agganciata: {name} · {bounds}")
+            except Exception as exc:
+                self.capture_status.setText(f"Errore aggancio finestra: {exc}")
+
+        def capture_screen(self, mode):
+            self.calculate()
+            region = self.region("manual")
+            if mode == "auto":
+                region.source = "auto"
+            spot = self.spot()
+            advice = self.last_payload
+            if not self.include_overlay.isChecked():
+                self.hide()
+                QApplication.processEvents()
+            try:
+                screen = QApplication.primaryScreen()
+                pixmap = screen.grabWindow(0, region.x, region.y, region.width, region.height)
+                if pixmap.isNull():
+                    self.capture_status.setText("Screenshot fallito: controlla permessi Registrazione Schermo.")
+                    return
+                self.capture_count += 1
+                filename = f"overlay_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
+                path = self.capture_session / "images" / filename
+                if not pixmap.save(str(path), "PNG"):
+                    self.capture_status.setText(f"Salvataggio fallito: {path}")
+                    return
+                record = capture_metadata(filename, region, spot, advice, mode)
+                with (self.capture_session / "metadata.jsonl").open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                self.capture_status.setText(
+                    f"Salvati {self.capture_count} screenshot · ultimo: {path.name}"
+                )
+            except Exception as exc:
+                self.capture_status.setText(f"Screenshot fallito: {exc}")
+            finally:
+                if not self.include_overlay.isChecked():
+                    self.show()
+                    self.raise_()
+
+        def toggle_auto_capture(self):
+            if self.auto_timer.isActive():
+                self.auto_timer.stop()
+                self.auto_btn.setText("Auto OFF")
+                self.capture_status.setText(f"Auto fermo · dataset: {self.capture_session}")
+                return
+            interval_ms = int(self.capture_interval.value() * 1000)
+            self.auto_timer.start(interval_ms)
+            self.auto_btn.setText("Auto ON")
+            self.capture_status.setText(
+                f"Auto ogni {self.capture_interval.value():.1f}s · dataset: {self.capture_session}"
+            )
 
     app = QApplication(sys.argv)
     win = OverlayWindow()
