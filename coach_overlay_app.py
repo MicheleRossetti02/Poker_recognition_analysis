@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +29,9 @@ from poker.engine import Situation, decide
 POSITIONS = ["UTG", "MP", "CO", "BTN", "SB", "BB"]
 STREETS = ["preflop", "flop", "turn", "river"]
 DEFAULT_CAPTURE_ROOT = Path("dataset/raw")
+DEFAULT_OVERLAY_OPACITY = 0.94
+CLICKTHROUGH_OPACITY = 0.48
+CLICKTHROUGH_SECONDS = 10
 
 
 @dataclass
@@ -52,10 +56,24 @@ class CaptureRegion:
     source: str = "manual"
 
 
-def create_capture_session(root: Path = DEFAULT_CAPTURE_ROOT) -> Path:
-    session = root / f"overlay_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    (session / "images").mkdir(parents=True, exist_ok=True)
-    return session
+def create_capture_session(
+    root: Path = DEFAULT_CAPTURE_ROOT,
+    fallback_root: Path | None = None,
+) -> Path:
+    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    roots = [root]
+    fallback = fallback_root or (Path(tempfile.gettempdir()) / "poker_coach_overlay")
+    if fallback != root:
+        roots.append(fallback)
+    errors = []
+    for base in roots:
+        session = base / f"overlay_session_{stamp}"
+        try:
+            (session / "images").mkdir(parents=True, exist_ok=True)
+            return session
+        except OSError as exc:
+            errors.append(f"{base}: {exc}")
+    raise OSError("Impossibile creare una sessione dataset: " + " | ".join(errors))
 
 
 def capture_metadata(
@@ -64,11 +82,13 @@ def capture_metadata(
     spot: OverlaySpot,
     advice: dict[str, object] | None,
     mode: str,
+    readout: str = "",
 ) -> dict[str, object]:
     return {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "filename": filename,
         "mode": mode,
+        "readout": readout,
         "region": {
             "x": region.x,
             "y": region.y,
@@ -175,6 +195,9 @@ def format_estimated_readout(
     equity = ""
     if payload and "equity" in payload:
         equity = f" · eq {int(round(float(payload['equity']) * 100))}%"
+    confidence = ""
+    if payload and "confidence" in payload:
+        confidence = f" · conf {int(round(float(payload['confidence']) * 100))}%"
     draws = ""
     if payload:
         draw_list = payload.get("draws", [])
@@ -182,8 +205,10 @@ def format_estimated_readout(
             draws = f" · {', '.join(str(d) for d in draw_list)}"
         elif payload.get("outs") is not None:
             draws = " · nessun draw"
+        if payload.get("outs") is not None:
+            draws = f"{draws} · outs {payload['outs']}"
     return (
-        f"Lettura stimata: {label}{equity} | Hero {hero} | Board {board} | "
+        f"Lettura stimata: {label}{equity}{confidence} | Hero {hero} | Board {board} | "
         f"{spot.street} {spot.position} | pot {spot.pot_bb:.1f}bb | "
         f"call {spot.to_call_bb:.1f}bb | opp {spot.opponents} | fonte {source}{draws}"
     )
@@ -201,6 +226,7 @@ def run_app():
         QLabel,
         QLineEdit,
         QPushButton,
+        QSlider,
         QSpinBox,
         QVBoxLayout,
         QWidget,
@@ -212,14 +238,21 @@ def run_app():
             super().__init__()
             self.setWindowTitle("Poker Coach Overlay")
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-            self.setWindowOpacity(0.94)
+            self.setWindowOpacity(DEFAULT_OVERLAY_OPACITY)
             self.setMinimumWidth(430)
             self.capture_session = create_capture_session()
             self.capture_count = 0
             self.last_payload = None
             self.readout_source = "manuale"
+            self.mini_mode = False
+            self.clickthrough_left = 0
             self.auto_timer = QTimer(self)
             self.auto_timer.timeout.connect(lambda: self.capture_screen("auto"))
+            self.recalc_timer = QTimer(self)
+            self.recalc_timer.setSingleShot(True)
+            self.recalc_timer.timeout.connect(self.calculate)
+            self.clickthrough_timer = QTimer(self)
+            self.clickthrough_timer.timeout.connect(self.tick_clickthrough)
 
             self.hero = QLineEdit("As Kh")
             self.board = QLineEdit("")
@@ -270,12 +303,12 @@ def run_app():
                 self.opponents,
             ):
                 try:
-                    widget.textChanged.connect(self.update_estimated_readout)
+                    widget.textChanged.connect(self.schedule_recalculate)
                 except AttributeError:
                     try:
-                        widget.valueChanged.connect(self.update_estimated_readout)
+                        widget.valueChanged.connect(self.schedule_recalculate)
                     except AttributeError:
-                        widget.currentTextChanged.connect(self.update_estimated_readout)
+                        widget.currentTextChanged.connect(self.schedule_recalculate)
 
             form = QGridLayout()
             form.addWidget(QLabel("Hero"), 0, 0)
@@ -327,11 +360,19 @@ def run_app():
             self.manual_panel.setObjectName("manualPanel")
             self.toggle_manual_btn = QPushButton("Manuale ON")
             self.toggle_manual_btn.clicked.connect(self.toggle_manual_panel)
+            self.mini_btn = QPushButton("Mini HUD")
+            self.mini_btn.clicked.connect(self.toggle_mini_mode)
             self.always_top = QCheckBox("Sempre sopra")
             self.always_top.setChecked(True)
             self.always_top.toggled.connect(self.set_always_on_top)
-            clickthrough = QPushButton("Click-through 10s")
-            clickthrough.clicked.connect(self.temporary_clickthrough)
+            self.clickthrough_btn = QPushButton(f"Click-through {CLICKTHROUGH_SECONDS}s")
+            self.clickthrough_btn.clicked.connect(self.temporary_clickthrough)
+            self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+            self.opacity_slider.setRange(35, 100)
+            self.opacity_slider.setValue(int(DEFAULT_OVERLAY_OPACITY * 100))
+            self.opacity_slider.setFixedWidth(100)
+            self.opacity_slider.valueChanged.connect(self.set_overlay_opacity)
+            self.opacity_label = QLabel("94%")
             calc = QPushButton("Calcola")
             demo = QPushButton("Demo draw")
             lock_window = QPushButton("Aggancia finestra poker")
@@ -351,8 +392,12 @@ def run_app():
             capture_buttons.addWidget(self.auto_btn)
             top_controls = QHBoxLayout()
             top_controls.addWidget(self.toggle_manual_btn)
+            top_controls.addWidget(self.mini_btn)
             top_controls.addWidget(self.always_top)
-            top_controls.addWidget(clickthrough)
+            top_controls.addWidget(self.clickthrough_btn)
+            top_controls.addWidget(QLabel("Opacita"))
+            top_controls.addWidget(self.opacity_slider)
+            top_controls.addWidget(self.opacity_label)
 
             manual_layout = QVBoxLayout(self.manual_panel)
             manual_layout.setContentsMargins(0, 0, 0, 0)
@@ -408,6 +453,7 @@ def run_app():
             )
 
         def calculate(self):
+            self.recalc_timer.stop()
             try:
                 self.last_payload = compute_overlay_advice(self.spot())
                 self.result.setText(_format_payload(self.last_payload))
@@ -415,6 +461,10 @@ def run_app():
                 self.last_payload = None
                 self.result.setText(f"Errore: {exc}")
             self.update_estimated_readout()
+
+        def schedule_recalculate(self, *args):
+            self.update_estimated_readout()
+            self.recalc_timer.start(350)
 
         def update_estimated_readout(self, *args):
             self.estimated.setText(
@@ -430,6 +480,16 @@ def run_app():
             )
             self.adjustSize()
 
+        def toggle_mini_mode(self):
+            self.mini_mode = not self.mini_mode
+            self.manual_panel.setVisible(not self.mini_mode)
+            self.mode_status.setVisible(not self.mini_mode)
+            self.toggle_manual_btn.setText("Manuale OFF" if self.mini_mode else "Manuale ON")
+            self.mini_btn.setText("HUD piena" if self.mini_mode else "Mini HUD")
+            self.setMinimumWidth(360 if self.mini_mode else 430)
+            self.resize(420 if self.mini_mode else 520, self.height())
+            self.adjustSize()
+
         def set_always_on_top(self, enabled):
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, bool(enabled))
             self.show()
@@ -440,16 +500,35 @@ def run_app():
                 "Overlay sempre in primo piano." if enabled else "Sempre sopra disattivato: ora puo passare dietro."
             )
 
+        def set_overlay_opacity(self, value):
+            opacity = max(35, min(100, int(value))) / 100
+            self.opacity_label.setText(f"{int(value)}%")
+            if not self.clickthrough_timer.isActive():
+                self.setWindowOpacity(opacity)
+
         def temporary_clickthrough(self):
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-            self.setWindowOpacity(0.48)
-            self.mode_status.setText("Click-through attivo per 10s: clicca pure la finestra sotto.")
-            self.capture_status.setText("Click-through attivo per 10s: puoi cliccare la finestra sotto.")
-            QTimer.singleShot(10000, self.restore_interactive)
+            self.setWindowOpacity(CLICKTHROUGH_OPACITY)
+            self.clickthrough_left = CLICKTHROUGH_SECONDS
+            self.clickthrough_btn.setEnabled(False)
+            self.clickthrough_btn.setText(f"Click {self.clickthrough_left}s")
+            self.mode_status.setText("Click-through attivo: clicca pure la finestra sotto.")
+            self.capture_status.setText("Click-through attivo: puoi cliccare la finestra sotto.")
+            self.clickthrough_timer.start(1000)
+
+        def tick_clickthrough(self):
+            self.clickthrough_left -= 1
+            if self.clickthrough_left <= 0:
+                self.restore_interactive()
+                return
+            self.clickthrough_btn.setText(f"Click {self.clickthrough_left}s")
 
         def restore_interactive(self):
+            self.clickthrough_timer.stop()
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-            self.setWindowOpacity(0.94)
+            self.setWindowOpacity(self.opacity_slider.value() / 100)
+            self.clickthrough_btn.setEnabled(True)
+            self.clickthrough_btn.setText(f"Click-through {CLICKTHROUGH_SECONDS}s")
             self.mode_status.setText("Overlay di nuovo cliccabile.")
             self.capture_status.setText("Overlay di nuovo cliccabile.")
             if self.always_top.isChecked():
@@ -509,7 +588,7 @@ def run_app():
                 if not pixmap.save(str(path), "PNG"):
                     self.capture_status.setText(f"Salvataggio fallito: {path}")
                     return
-                record = capture_metadata(filename, region, spot, advice, mode)
+                record = capture_metadata(filename, region, spot, advice, mode, self.estimated.text())
                 with (self.capture_session / "metadata.jsonl").open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 self.capture_status.setText(

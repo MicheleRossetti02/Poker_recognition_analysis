@@ -375,10 +375,23 @@ def test_overlay_capture_metadata_is_json_ready(tmp_path):
         OverlaySpot(hero_cards="As Kh"),
         {"label": "RAISE to 3"},
         "manual",
+        "Lettura stimata: RAISE to 3",
     )
     assert record["filename"] == "shot.png"
+    assert record["readout"] == "Lettura stimata: RAISE to 3"
     assert record["region"]["width"] == 300
     assert record["spot"]["hero_cards"] == "As Kh"
+
+
+def test_overlay_capture_session_falls_back_when_root_unusable(tmp_path):
+    from coach_overlay_app import create_capture_session
+
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    fallback = tmp_path / "fallback"
+    session = create_capture_session(blocked, fallback_root=fallback)
+    assert session.parent == fallback
+    assert (session / "images").is_dir()
 
 
 def test_overlay_estimated_readout_keeps_key_state_visible():
@@ -387,11 +400,15 @@ def test_overlay_estimated_readout_keeps_key_state_visible():
     text = format_estimated_readout(
         OverlaySpot(hero_cards="Ah Kh", board_cards="Qh 7c 2h",
                     street="flop", position="BTN", pot_bb=6, to_call_bb=2, opponents=1),
-        {"label": "CALL 2", "equity": 0.62, "draws": ["flush draw"], "outs": 9},
+        {"label": "CALL 2", "equity": 0.62, "confidence": 0.8,
+         "draws": ["flush draw"], "outs": 9},
         "finestra: PokerStars",
     )
     assert "CALL 2" in text
+    assert "eq 62%" in text
+    assert "conf 80%" in text
     assert "Hero Ah Kh" in text
     assert "Board Qh 7c 2h" in text
     assert "fonte finestra: PokerStars" in text
     assert "flush draw" in text
+    assert "outs 9" in text
