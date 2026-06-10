@@ -32,6 +32,7 @@ DEFAULT_CAPTURE_ROOT = Path("dataset/raw")
 DEFAULT_OVERLAY_OPACITY = 0.94
 CLICKTHROUGH_OPACITY = 0.48
 CLICKTHROUGH_SECONDS = 10
+CONFIG_PATH = Path.home() / ".poker_coach_overlay.json"
 
 
 @dataclass
@@ -71,6 +72,49 @@ def region_from_points(
     if width < min_size or height < min_size:
         raise ValueError(f"Area troppo piccola: minimo {min_size}x{min_size}px")
     return CaptureRegion(left, top, width, height, source)
+
+
+def load_overlay_config(path: Path = CONFIG_PATH) -> dict[str, object]:
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_overlay_config(config: dict[str, object], path: Path = CONFIG_PATH) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            json.dump(config, fh, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+
+
+def region_to_config(region: CaptureRegion) -> dict[str, object]:
+    return {
+        "x": region.x,
+        "y": region.y,
+        "width": region.width,
+        "height": region.height,
+        "source": region.source,
+    }
+
+
+def region_from_config(config: dict[str, object] | None) -> CaptureRegion | None:
+    if not isinstance(config, dict):
+        return None
+    try:
+        return CaptureRegion(
+            x=int(config["x"]),
+            y=int(config["y"]),
+            width=int(config["width"]),
+            height=int(config["height"]),
+            source=str(config.get("source", "saved")),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def create_capture_session(
@@ -242,6 +286,7 @@ def run_app():
         QHBoxLayout,
         QLabel,
         QLineEdit,
+        QProgressBar,
         QPushButton,
         QRubberBand,
         QSlider,
@@ -279,6 +324,37 @@ def run_app():
                 self.finished.emit(windows, message)
             except Exception as exc:
                 self.finished.emit([], f"Errore lettura finestre: {exc}. Usa Seleziona area.")
+
+    class PermissionDiagWorker(QObject):
+        finished = pyqtSignal(str)
+
+        def run(self):
+            lines = []
+            try:
+                import window_capture
+                from window_capture import WindowCapture
+
+                lines.append(
+                    "Quartz: OK" if window_capture.QUARTZ_AVAILABLE
+                    else "Quartz: non installato, uso fallback AppleScript"
+                )
+                capture = WindowCapture(allow_fullscreen_fallback=False, auto_detect=False)
+                visible = capture.list_visible_windows(include_non_poker=True)
+                candidates = capture.list_visible_windows(include_non_poker=False)
+                lines.append(f"Finestre leggibili da macOS: {len(visible)}")
+                lines.append(f"Candidate poker: {len(candidates)}")
+                if visible and not candidates:
+                    owners = ", ".join(sorted({str(w.get('owner', '')) for w in visible})[:5])
+                    lines.append(f"Visibili: {owners}")
+                if not visible:
+                    lines.append("Accessibilita: probabilmente non concessa a Python/Overlay.")
+                if not candidates:
+                    lines.append("Consiglio: usa Seleziona area; e' indipendente dalla lista finestre.")
+                lines.append("Screenshot: se fallisce, abilita Registrazione schermo per Python/Overlay.")
+            except Exception as exc:
+                lines.append(f"Diagnostica non riuscita: {exc}")
+                lines.append("Usa Seleziona area; poi abilita Accessibilita/Registrazione schermo se serve.")
+            self.finished.emit(" | ".join(lines))
 
     def virtual_screen_geometry():
         screens = QApplication.screens()
@@ -358,6 +434,9 @@ def run_app():
             self.region_picker = None
             self.window_scan_thread = None
             self.window_scan_worker = None
+            self.diag_thread = None
+            self.diag_worker = None
+            self.simple_area_mode = False
             self.mini_mode = False
             self.clickthrough_left = 0
             self.auto_timer = QTimer(self)
@@ -443,21 +522,27 @@ def run_app():
             form.addWidget(self.opponents, 7, 1)
 
             capture_form = QGridLayout()
-            capture_form.addWidget(QLabel("X"), 0, 0)
+            self.capture_x_label = QLabel("X")
+            self.capture_y_label = QLabel("Y")
+            self.capture_w_label = QLabel("W")
+            self.capture_h_label = QLabel("H")
+            self.capture_auto_label = QLabel("Auto s")
+            self.capture_window_label = QLabel("Finestra")
+            capture_form.addWidget(self.capture_x_label, 0, 0)
             capture_form.addWidget(self.capture_x, 0, 1)
-            capture_form.addWidget(QLabel("Y"), 0, 2)
+            capture_form.addWidget(self.capture_y_label, 0, 2)
             capture_form.addWidget(self.capture_y, 0, 3)
-            capture_form.addWidget(QLabel("W"), 1, 0)
+            capture_form.addWidget(self.capture_w_label, 1, 0)
             capture_form.addWidget(self.capture_w, 1, 1)
-            capture_form.addWidget(QLabel("H"), 1, 2)
+            capture_form.addWidget(self.capture_h_label, 1, 2)
             capture_form.addWidget(self.capture_h, 1, 3)
-            capture_form.addWidget(QLabel("Auto s"), 2, 0)
+            capture_form.addWidget(self.capture_auto_label, 2, 0)
             capture_form.addWidget(self.capture_interval, 2, 1)
             capture_form.addWidget(self.include_overlay, 2, 2, 1, 2)
             self.window_combo = QComboBox()
             self.window_combo.setMinimumWidth(260)
             self.window_combo.addItem("Lista non aggiornata: premi Aggiorna finestre o Seleziona area")
-            capture_form.addWidget(QLabel("Finestra"), 3, 0)
+            capture_form.addWidget(self.capture_window_label, 3, 0)
             capture_form.addWidget(self.window_combo, 3, 1, 1, 3)
 
             self.estimated = QLabel("")
@@ -475,6 +560,10 @@ def run_app():
             self.capture_status = QLabel(f"Dataset: {self.capture_session}")
             self.capture_status.setWordWrap(True)
             self.capture_status.setStyleSheet("color:#9aa3ad;padding:4px;")
+            self.progress = QProgressBar()
+            self.progress.setRange(0, 0)
+            self.progress.setTextVisible(False)
+            self.progress.setVisible(False)
             self.manual_panel = QWidget()
             self.manual_panel.setObjectName("manualPanel")
             self.toggle_manual_btn = QPushButton("Manuale ON")
@@ -498,9 +587,30 @@ def run_app():
             refresh_windows = QPushButton("Aggiorna finestre")
             lock_selected = QPushButton("Aggancia selezionata")
             select_area = QPushButton("Seleziona area")
+            simple_area = QPushButton("Solo area")
+            diagnose = QPushButton("Diagnostica")
             screenshot = QPushButton("Screenshot")
             self.auto_btn = QPushButton("Auto OFF")
             self.refresh_windows_btn = refresh_windows
+            self.lock_window_btn = lock_window
+            self.lock_selected_btn = lock_selected
+            self.simple_area_btn = simple_area
+            self.diagnose_btn = diagnose
+            self.advanced_capture_widgets = [
+                self.capture_x_label,
+                self.capture_x,
+                self.capture_y_label,
+                self.capture_y,
+                self.capture_w_label,
+                self.capture_w,
+                self.capture_h_label,
+                self.capture_h,
+                self.capture_window_label,
+                self.window_combo,
+                self.lock_window_btn,
+                self.refresh_windows_btn,
+                self.lock_selected_btn,
+            ]
             select_area.setObjectName("primaryAreaButton")
             calc.clicked.connect(self.calculate)
             demo.clicked.connect(self.load_demo)
@@ -508,6 +618,8 @@ def run_app():
             refresh_windows.clicked.connect(self.refresh_window_choices)
             lock_selected.clicked.connect(self.lock_selected_window)
             select_area.clicked.connect(self.start_region_picker)
+            simple_area.clicked.connect(self.toggle_simple_area_mode)
+            diagnose.clicked.connect(self.run_permission_diagnostics)
             screenshot.clicked.connect(lambda: self.capture_screen("manual"))
             self.auto_btn.clicked.connect(self.toggle_auto_capture)
             buttons = QHBoxLayout()
@@ -518,6 +630,8 @@ def run_app():
             capture_buttons.addWidget(refresh_windows)
             capture_buttons.addWidget(lock_selected)
             capture_buttons.addWidget(select_area)
+            capture_buttons.addWidget(simple_area)
+            capture_buttons.addWidget(diagnose)
             capture_buttons.addWidget(screenshot)
             capture_buttons.addWidget(self.auto_btn)
             top_controls = QHBoxLayout()
@@ -537,6 +651,7 @@ def run_app():
             manual_layout.addWidget(QLabel("Cattura dataset"))
             manual_layout.addLayout(capture_form)
             manual_layout.addLayout(capture_buttons)
+            manual_layout.addWidget(self.progress)
             manual_layout.addWidget(self.capture_status)
 
             layout = QVBoxLayout(self)
@@ -566,9 +681,11 @@ def run_app():
                 QCheckBox { padding:4px; }
             """)
             self.calculate()
+            self.load_saved_capture_region()
             self.capture_status.setText(
                 "Se il menu finestre resta vuoto, premi Seleziona area e trascina sul tavolo."
             )
+            self.set_simple_area_mode(True)
 
         def spot(self):
             return OverlaySpot(
@@ -692,7 +809,55 @@ def run_app():
             self.move(int(bounds["x"]) + 20, int(bounds["y"]) + 20)
             self.readout_source = source
             self.update_estimated_readout()
+            self.save_current_capture_region(source)
             self.capture_status.setText(f"Agganciata: {window_name} · {bounds}")
+
+        def load_saved_capture_region(self):
+            config = load_overlay_config()
+            region = region_from_config(config.get("last_region"))
+            if region is None:
+                return
+            self.capture_x.setValue(region.x)
+            self.capture_y.setValue(region.y)
+            self.capture_w.setValue(region.width)
+            self.capture_h.setValue(region.height)
+            self.readout_source = region.source or "area salvata"
+            self.update_estimated_readout()
+            self.capture_status.setText(
+                f"Area salvata caricata: {region.width}x{region.height} @ {region.x},{region.y}"
+            )
+
+        def save_current_capture_region(self, source="selected"):
+            region = CaptureRegion(
+                self.capture_x.value(),
+                self.capture_y.value(),
+                self.capture_w.value(),
+                self.capture_h.value(),
+                str(source or "selected"),
+            )
+            config = load_overlay_config()
+            config["last_region"] = region_to_config(region)
+            config["last_saved_at"] = datetime.now().isoformat(timespec="seconds")
+            save_overlay_config(config)
+
+        def toggle_simple_area_mode(self):
+            self.set_simple_area_mode(not self.simple_area_mode)
+
+        def set_simple_area_mode(self, enabled):
+            self.simple_area_mode = bool(enabled)
+            for widget in self.advanced_capture_widgets:
+                widget.setVisible(not self.simple_area_mode)
+            self.simple_area_btn.setText("Area semplice ON" if self.simple_area_mode else "Solo area")
+            self.capture_status.setText(
+                "Modalita area semplice: usa Seleziona area, Screenshot e Auto."
+                if self.simple_area_mode
+                else "Modalita avanzata: puoi usare lista finestre e coordinate."
+            )
+
+        def set_progress(self, active, message=None):
+            self.progress.setVisible(bool(active))
+            if message:
+                self.capture_status.setText(message)
 
         def refresh_window_choices(self):
             if self.window_scan_thread and self.window_scan_thread.isRunning():
@@ -704,7 +869,7 @@ def run_app():
             self.window_combo.setEnabled(False)
             self.refresh_windows_btn.setEnabled(False)
             self.refresh_windows_btn.setText("Cerco...")
-            self.capture_status.setText("Ricerca finestre in background. Se tarda, premi Seleziona area.")
+            self.set_progress(True, "Ricerca finestre in background. Se tarda, premi Seleziona area.")
 
             self.window_scan_thread = QThread(self)
             self.window_scan_worker = WindowScanWorker()
@@ -722,6 +887,7 @@ def run_app():
             self.window_combo.setEnabled(True)
             self.refresh_windows_btn.setEnabled(True)
             self.refresh_windows_btn.setText("Aggiorna finestre")
+            self.set_progress(False)
             if self.window_choices:
                 for window in self.window_choices:
                     bounds = window["bounds"]
@@ -735,6 +901,31 @@ def run_app():
                 self.capture_status.setText(message)
             self.window_scan_thread = None
             self.window_scan_worker = None
+
+        def run_permission_diagnostics(self):
+            if self.diag_thread and self.diag_thread.isRunning():
+                self.capture_status.setText("Diagnostica gia in corso.")
+                return
+            self.diagnose_btn.setEnabled(False)
+            self.diagnose_btn.setText("Diagnostica...")
+            self.set_progress(True, "Controllo permessi e visibilita finestre...")
+            self.diag_thread = QThread(self)
+            self.diag_worker = PermissionDiagWorker()
+            self.diag_worker.moveToThread(self.diag_thread)
+            self.diag_thread.started.connect(self.diag_worker.run)
+            self.diag_worker.finished.connect(self.apply_permission_diagnostics)
+            self.diag_worker.finished.connect(self.diag_thread.quit)
+            self.diag_worker.finished.connect(self.diag_worker.deleteLater)
+            self.diag_thread.finished.connect(self.diag_thread.deleteLater)
+            self.diag_thread.start()
+
+        def apply_permission_diagnostics(self, message):
+            self.set_progress(False)
+            self.diagnose_btn.setEnabled(True)
+            self.diagnose_btn.setText("Diagnostica")
+            self.capture_status.setText(message)
+            self.diag_thread = None
+            self.diag_worker = None
 
         def lock_selected_window(self):
             idx = self.window_combo.currentIndex()

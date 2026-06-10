@@ -405,6 +405,22 @@ def test_overlay_region_from_points_normalizes_drag():
     assert region.source == "selected"
 
 
+def test_overlay_region_config_roundtrip(tmp_path):
+    from coach_overlay_app import (
+        CaptureRegion,
+        load_overlay_config,
+        region_from_config,
+        region_to_config,
+        save_overlay_config,
+    )
+
+    path = tmp_path / "overlay.json"
+    original = CaptureRegion(100, 124, 1111, 739, "area selezionata")
+    save_overlay_config({"last_region": region_to_config(original)}, path)
+    loaded = region_from_config(load_overlay_config(path)["last_region"])
+    assert loaded == original
+
+
 def test_window_capture_accepts_pokerstars_table_without_poker_title():
     from window_capture import WindowCapture
 
