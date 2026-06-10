@@ -394,6 +394,17 @@ def test_overlay_capture_session_falls_back_when_root_unusable(tmp_path):
     assert (session / "images").is_dir()
 
 
+def test_overlay_region_from_points_normalizes_drag():
+    from coach_overlay_app import region_from_points
+
+    region = region_from_points(900, 700, 120, 80, source="selected")
+    assert region.x == 120
+    assert region.y == 80
+    assert region.width == 780
+    assert region.height == 620
+    assert region.source == "selected"
+
+
 def test_window_capture_accepts_pokerstars_table_without_poker_title():
     from window_capture import WindowCapture
 

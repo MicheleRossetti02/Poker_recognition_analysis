@@ -82,6 +82,8 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 # Nell'overlay: "Aggancia finestra poker" prova a leggere i bounds della finestra.
 # Se non trova nulla, premi "Aggiorna finestre", scegli la finestra PokerStars
 # dal menu "Finestra", poi premi "Aggancia selezionata".
+# Se il menu resta vuoto, premi "Seleziona area", trascina sul tavolo PokerStars
+# e l'overlay compilerà automaticamente X/Y/W/H senza permessi finestra.
 # "Manuale ON/OFF" comprime i comandi lasciando visibile la lettura stimata.
 # "Mini HUD" riduce la finestra alla barra utile durante il gioco.
 # "Sempre sopra" decide se l'overlay resta davanti; "Click-through" lascia

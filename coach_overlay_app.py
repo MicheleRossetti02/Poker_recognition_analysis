@@ -56,6 +56,23 @@ class CaptureRegion:
     source: str = "manual"
 
 
+def region_from_points(
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    source: str = "selected",
+    min_size: int = 40,
+) -> CaptureRegion:
+    left = min(int(x1), int(x2))
+    top = min(int(y1), int(y2))
+    width = abs(int(x2) - int(x1))
+    height = abs(int(y2) - int(y1))
+    if width < min_size or height < min_size:
+        raise ValueError(f"Area troppo piccola: minimo {min_size}x{min_size}px")
+    return CaptureRegion(left, top, width, height, source)
+
+
 def create_capture_session(
     root: Path = DEFAULT_CAPTURE_ROOT,
     fallback_root: Path | None = None,
@@ -215,7 +232,7 @@ def format_estimated_readout(
 
 
 def run_app():
-    from PyQt6.QtCore import Qt, QTimer
+    from PyQt6.QtCore import QPoint, QRect, Qt, QTimer
     from PyQt6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -226,12 +243,76 @@ def run_app():
         QLabel,
         QLineEdit,
         QPushButton,
+        QRubberBand,
         QSlider,
         QSpinBox,
         QVBoxLayout,
         QWidget,
     )
     import sys
+
+    def virtual_screen_geometry():
+        screens = QApplication.screens()
+        if not screens:
+            return QRect(0, 0, 1200, 800)
+        geo = screens[0].geometry()
+        for screen in screens[1:]:
+            geo = geo.united(screen.geometry())
+        return geo
+
+    class RegionPicker(QWidget):
+        def __init__(self, on_done):
+            super().__init__()
+            self.on_done = on_done
+            self.origin_global = QPoint()
+            self.rubber = QRubberBand(QRubberBand.Shape.Rectangle, self)
+            self.setWindowTitle("Seleziona area poker")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.Tool
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.setCursor(Qt.CursorShape.CrossCursor)
+            self.setGeometry(virtual_screen_geometry())
+            self.hint = QLabel("Trascina sul tavolo poker. Esc annulla.", self)
+            self.hint.setStyleSheet(
+                "background:#11161b;color:#ffcf5a;padding:10px;"
+                "border:1px solid #5ad17a;border-radius:6px;font-weight:800;"
+            )
+            self.hint.move(24, 24)
+
+        def mousePressEvent(self, event):
+            self.origin_global = event.globalPosition().toPoint()
+            origin_local = self.mapFromGlobal(self.origin_global)
+            self.rubber.setGeometry(QRect(origin_local, origin_local))
+            self.rubber.show()
+
+        def mouseMoveEvent(self, event):
+            current = event.globalPosition().toPoint()
+            self.rubber.setGeometry(
+                QRect(self.mapFromGlobal(self.origin_global), self.mapFromGlobal(current)).normalized()
+            )
+
+        def mouseReleaseEvent(self, event):
+            current = event.globalPosition().toPoint()
+            try:
+                region = region_from_points(
+                    self.origin_global.x(),
+                    self.origin_global.y(),
+                    current.x(),
+                    current.y(),
+                    source="selected",
+                )
+            except ValueError:
+                region = None
+            self.close()
+            self.on_done(region)
+
+        def keyPressEvent(self, event):
+            if event.key() == Qt.Key.Key_Escape:
+                self.close()
+                self.on_done(None)
 
     class OverlayWindow(QWidget):
         def __init__(self):
@@ -245,6 +326,7 @@ def run_app():
             self.last_payload = None
             self.readout_source = "manuale"
             self.window_choices = []
+            self.region_picker = None
             self.mini_mode = False
             self.clickthrough_left = 0
             self.auto_timer = QTimer(self)
@@ -383,6 +465,7 @@ def run_app():
             lock_window = QPushButton("Aggancia finestra poker")
             refresh_windows = QPushButton("Aggiorna finestre")
             lock_selected = QPushButton("Aggancia selezionata")
+            select_area = QPushButton("Seleziona area")
             screenshot = QPushButton("Screenshot")
             self.auto_btn = QPushButton("Auto OFF")
             calc.clicked.connect(self.calculate)
@@ -390,6 +473,7 @@ def run_app():
             lock_window.clicked.connect(self.lock_poker_window)
             refresh_windows.clicked.connect(self.refresh_window_choices)
             lock_selected.clicked.connect(self.lock_selected_window)
+            select_area.clicked.connect(self.start_region_picker)
             screenshot.clicked.connect(lambda: self.capture_screen("manual"))
             self.auto_btn.clicked.connect(self.toggle_auto_capture)
             buttons = QHBoxLayout()
@@ -399,6 +483,7 @@ def run_app():
             capture_buttons.addWidget(lock_window)
             capture_buttons.addWidget(refresh_windows)
             capture_buttons.addWidget(lock_selected)
+            capture_buttons.addWidget(select_area)
             capture_buttons.addWidget(screenshot)
             capture_buttons.addWidget(self.auto_btn)
             top_controls = QHBoxLayout()
@@ -592,7 +677,7 @@ def run_app():
                     )
                 else:
                     self.capture_status.setText(
-                        "Nessuna finestra leggibile. Controlla permessi Accessibilita per Python/Codex."
+                        "Nessuna finestra leggibile. Usa Seleziona area oppure controlla permessi Accessibilita."
                     )
             except Exception as exc:
                 self.capture_status.setText(f"Errore lettura finestre: {exc}")
@@ -609,6 +694,33 @@ def run_app():
                 f"finestra: {name}",
                 name,
             )
+
+        def start_region_picker(self):
+            self.capture_status.setText("Seleziona l'area del tavolo: trascina un rettangolo, Esc annulla.")
+            self.hide()
+
+            def finish(region):
+                self.show()
+                self.raise_()
+                self.region_picker = None
+                if region is None:
+                    self.capture_status.setText("Selezione area annullata o troppo piccola.")
+                    return
+                self.set_capture_region_from_bounds(
+                    {
+                        "x": region.x,
+                        "y": region.y,
+                        "width": region.width,
+                        "height": region.height,
+                    },
+                    "area selezionata",
+                    "area selezionata",
+                )
+
+            self.region_picker = RegionPicker(finish)
+            self.region_picker.show()
+            self.region_picker.raise_()
+            self.region_picker.activateWindow()
 
         def lock_poker_window(self):
             try:
