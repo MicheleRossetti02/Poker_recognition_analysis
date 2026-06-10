@@ -39,11 +39,15 @@ RUN = """#!/bin/bash
 # Auto-generated launcher. Picks a venv that satisfies the imports, then runs.
 REPO="{repo}"
 cd "$REPO" || exit 1
+mkdir -p "$REPO/apps/logs"
+LOG="$REPO/apps/logs/{ident}.log"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Launching {name}" >> "$LOG"
 IMPORTS="{imports}"
 for PY in "$REPO/venv/bin/python" "$REPO/venv312/bin/python" python3; do
   if [ -x "$PY" ] || command -v "$PY" >/dev/null 2>&1; then
     if "$PY" -c "import $IMPORTS" >/dev/null 2>&1; then
-      exec "$PY" {script} {args}
+      echo "Using $PY" >> "$LOG"
+      exec "$PY" {script} {args} >> "$LOG" 2>&1
     fi
   fi
 done
@@ -59,7 +63,7 @@ def make_app(name: str, ident: str, script: str, args: str, imports: str):
     (app / "Contents" / "Info.plist").write_text(PLIST.format(name=name, ident=ident))
     run = macos / "run"
     run.write_text(RUN.format(repo=str(ROOT), imports=imports, script=script,
-                              args=args, name=name))
+                              args=args, name=name, ident=ident))
     run.chmod(run.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return app
 

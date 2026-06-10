@@ -379,3 +379,19 @@ def test_overlay_capture_metadata_is_json_ready(tmp_path):
     assert record["filename"] == "shot.png"
     assert record["region"]["width"] == 300
     assert record["spot"]["hero_cards"] == "As Kh"
+
+
+def test_overlay_estimated_readout_keeps_key_state_visible():
+    from coach_overlay_app import OverlaySpot, format_estimated_readout
+
+    text = format_estimated_readout(
+        OverlaySpot(hero_cards="Ah Kh", board_cards="Qh 7c 2h",
+                    street="flop", position="BTN", pot_bb=6, to_call_bb=2, opponents=1),
+        {"label": "CALL 2", "equity": 0.62, "draws": ["flush draw"], "outs": 9},
+        "finestra: PokerStars",
+    )
+    assert "CALL 2" in text
+    assert "Hero Ah Kh" in text
+    assert "Board Qh 7c 2h" in text
+    assert "fonte finestra: PokerStars" in text
+    assert "flush draw" in text

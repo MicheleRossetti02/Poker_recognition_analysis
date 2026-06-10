@@ -163,6 +163,32 @@ def _format_payload(payload: dict[str, object]) -> str:
     )
 
 
+def format_estimated_readout(
+    spot: OverlaySpot,
+    payload: dict[str, object] | None,
+    source: str = "manuale",
+) -> str:
+    """Compact summary that stays visible while the detailed panel is hidden."""
+    board = spot.board_cards.strip() or "-"
+    hero = spot.hero_cards.strip() or "-"
+    label = str(payload.get("label", "in attesa")) if payload else "in attesa"
+    equity = ""
+    if payload and "equity" in payload:
+        equity = f" · eq {int(round(float(payload['equity']) * 100))}%"
+    draws = ""
+    if payload:
+        draw_list = payload.get("draws", [])
+        if draw_list:
+            draws = f" · {', '.join(str(d) for d in draw_list)}"
+        elif payload.get("outs") is not None:
+            draws = " · nessun draw"
+    return (
+        f"Lettura stimata: {label}{equity} | Hero {hero} | Board {board} | "
+        f"{spot.street} {spot.position} | pot {spot.pot_bb:.1f}bb | "
+        f"call {spot.to_call_bb:.1f}bb | opp {spot.opponents} | fonte {source}{draws}"
+    )
+
+
 def run_app():
     from PyQt6.QtCore import Qt, QTimer
     from PyQt6.QtWidgets import (
@@ -185,15 +211,13 @@ def run_app():
         def __init__(self):
             super().__init__()
             self.setWindowTitle("Poker Coach Overlay")
-            self.setWindowFlags(
-                Qt.WindowType.WindowStaysOnTopHint
-                | Qt.WindowType.Tool
-            )
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
             self.setWindowOpacity(0.94)
             self.setMinimumWidth(430)
             self.capture_session = create_capture_session()
             self.capture_count = 0
             self.last_payload = None
+            self.readout_source = "manuale"
             self.auto_timer = QTimer(self)
             self.auto_timer.timeout.connect(lambda: self.capture_screen("auto"))
 
@@ -235,6 +259,24 @@ def run_app():
             self.include_overlay = QCheckBox("Includi overlay nello screenshot")
             self.include_overlay.setChecked(False)
 
+            for widget in (
+                self.hero,
+                self.board,
+                self.position,
+                self.street,
+                self.pot,
+                self.to_call,
+                self.stack,
+                self.opponents,
+            ):
+                try:
+                    widget.textChanged.connect(self.update_estimated_readout)
+                except AttributeError:
+                    try:
+                        widget.valueChanged.connect(self.update_estimated_readout)
+                    except AttributeError:
+                        widget.currentTextChanged.connect(self.update_estimated_readout)
+
             form = QGridLayout()
             form.addWidget(QLabel("Hero"), 0, 0)
             form.addWidget(self.hero, 0, 1)
@@ -266,12 +308,30 @@ def run_app():
             capture_form.addWidget(self.capture_interval, 2, 1)
             capture_form.addWidget(self.include_overlay, 2, 2, 1, 2)
 
+            self.estimated = QLabel("")
+            self.estimated.setWordWrap(True)
+            self.estimated.setStyleSheet(
+                "font-weight:800;color:#ffcf5a;padding:8px;"
+                "border:1px solid #39414b;border-radius:6px;background:#11161b;"
+            )
+            self.mode_status = QLabel("Manuale pronto.")
+            self.mode_status.setWordWrap(True)
+            self.mode_status.setStyleSheet("color:#9aa3ad;padding:2px 4px;")
             self.result = QLabel("Pronto.")
             self.result.setWordWrap(True)
             self.result.setStyleSheet("font-weight:700;color:#e8eaed;padding:8px;")
             self.capture_status = QLabel(f"Dataset: {self.capture_session}")
             self.capture_status.setWordWrap(True)
             self.capture_status.setStyleSheet("color:#9aa3ad;padding:4px;")
+            self.manual_panel = QWidget()
+            self.manual_panel.setObjectName("manualPanel")
+            self.toggle_manual_btn = QPushButton("Manuale ON")
+            self.toggle_manual_btn.clicked.connect(self.toggle_manual_panel)
+            self.always_top = QCheckBox("Sempre sopra")
+            self.always_top.setChecked(True)
+            self.always_top.toggled.connect(self.set_always_on_top)
+            clickthrough = QPushButton("Click-through 10s")
+            clickthrough.clicked.connect(self.temporary_clickthrough)
             calc = QPushButton("Calcola")
             demo = QPushButton("Demo draw")
             lock_window = QPushButton("Aggancia finestra poker")
@@ -289,18 +349,29 @@ def run_app():
             capture_buttons.addWidget(lock_window)
             capture_buttons.addWidget(screenshot)
             capture_buttons.addWidget(self.auto_btn)
+            top_controls = QHBoxLayout()
+            top_controls.addWidget(self.toggle_manual_btn)
+            top_controls.addWidget(self.always_top)
+            top_controls.addWidget(clickthrough)
+
+            manual_layout = QVBoxLayout(self.manual_panel)
+            manual_layout.setContentsMargins(0, 0, 0, 0)
+            manual_layout.addLayout(form)
+            manual_layout.addLayout(buttons)
+            manual_layout.addWidget(self.result)
+            manual_layout.addWidget(QLabel("Cattura dataset"))
+            manual_layout.addLayout(capture_form)
+            manual_layout.addLayout(capture_buttons)
+            manual_layout.addWidget(self.capture_status)
 
             layout = QVBoxLayout(self)
             title = QLabel("Poker Coach Overlay")
             title.setStyleSheet("font-size:18px;font-weight:800;color:#5ad17a;")
             layout.addWidget(title)
-            layout.addLayout(form)
-            layout.addLayout(buttons)
-            layout.addWidget(self.result)
-            layout.addWidget(QLabel("Cattura dataset"))
-            layout.addLayout(capture_form)
-            layout.addLayout(capture_buttons)
-            layout.addWidget(self.capture_status)
+            layout.addWidget(self.estimated)
+            layout.addLayout(top_controls)
+            layout.addWidget(self.mode_status)
+            layout.addWidget(self.manual_panel)
             self.setStyleSheet("""
                 QWidget { background:#161a20; color:#e8eaed; font-size:13px; }
                 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
@@ -311,6 +382,7 @@ def run_app():
                     background:#5ad17a; color:#06210f; border:0; padding:8px;
                     border-radius:6px; font-weight:800;
                 }
+                QCheckBox { padding:4px; }
             """)
             self.calculate()
 
@@ -342,6 +414,46 @@ def run_app():
             except Exception as exc:
                 self.last_payload = None
                 self.result.setText(f"Errore: {exc}")
+            self.update_estimated_readout()
+
+        def update_estimated_readout(self, *args):
+            self.estimated.setText(
+                format_estimated_readout(self.spot(), self.last_payload, self.readout_source)
+            )
+
+        def toggle_manual_panel(self):
+            visible = not self.manual_panel.isVisible()
+            self.manual_panel.setVisible(visible)
+            self.toggle_manual_btn.setText("Manuale ON" if visible else "Manuale OFF")
+            self.mode_status.setText(
+                "Comandi manuali visibili." if visible else "Comandi manuali nascosti: resta la lettura stimata."
+            )
+            self.adjustSize()
+
+        def set_always_on_top(self, enabled):
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, bool(enabled))
+            self.show()
+            if enabled:
+                self.raise_()
+                self.activateWindow()
+            self.mode_status.setText(
+                "Overlay sempre in primo piano." if enabled else "Sempre sopra disattivato: ora puo passare dietro."
+            )
+
+        def temporary_clickthrough(self):
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+            self.setWindowOpacity(0.48)
+            self.mode_status.setText("Click-through attivo per 10s: clicca pure la finestra sotto.")
+            self.capture_status.setText("Click-through attivo per 10s: puoi cliccare la finestra sotto.")
+            QTimer.singleShot(10000, self.restore_interactive)
+
+        def restore_interactive(self):
+            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+            self.setWindowOpacity(0.94)
+            self.mode_status.setText("Overlay di nuovo cliccabile.")
+            self.capture_status.setText("Overlay di nuovo cliccabile.")
+            if self.always_top.isChecked():
+                self.raise_()
 
         def load_demo(self):
             self.hero.setText("Ah Kh")
@@ -369,6 +481,8 @@ def run_app():
                 self.capture_h.setValue(int(bounds["height"]))
                 self.move(int(bounds["x"]) + 20, int(bounds["y"]) + 20)
                 name = capture.current_window[1] if capture.current_window else "poker"
+                self.readout_source = f"finestra: {name}"
+                self.update_estimated_readout()
                 self.capture_status.setText(f"Agganciata: {name} · {bounds}")
             except Exception as exc:
                 self.capture_status.setText(f"Errore aggancio finestra: {exc}")
@@ -422,8 +536,16 @@ def run_app():
             )
 
     app = QApplication(sys.argv)
+    app.setApplicationName("Poker Coach Overlay")
     win = OverlayWindow()
+    screen = app.primaryScreen()
+    if screen is not None:
+        geo = screen.availableGeometry()
+        win.move(geo.x() + 80, geo.y() + 80)
+    win.resize(520, 720)
     win.show()
+    win.raise_()
+    win.activateWindow()
     sys.exit(app.exec())
 
 
