@@ -67,7 +67,8 @@ class WindowCapture:
         keywords=None,
         refresh_interval=2.0,
         allow_fullscreen_fallback=False,
-        preferred_owners=None
+        preferred_owners=None,
+        auto_detect=True,
     ):
         """
         Initialize window capture
@@ -101,7 +102,7 @@ class WindowCapture:
         self._window_id_capture_fail = 0
 
         # Try initial detection
-        if self.mode in ('window', 'applescript'):
+        if auto_detect and self.mode in ('window', 'applescript'):
             self._refresh_window()
 
     def list_visible_windows(self, include_non_poker=False):

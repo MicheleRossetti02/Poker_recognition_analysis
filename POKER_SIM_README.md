@@ -79,11 +79,10 @@ venv/bin/python poker_gui.py replay --lineup engine,tag,station --hands 6  # ste
 venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot dataset capture
 
 # Overlay capture dataset
-# Nell'overlay: "Aggancia finestra poker" prova a leggere i bounds della finestra.
-# Se non trova nulla, premi "Aggiorna finestre", scegli la finestra PokerStars
-# dal menu "Finestra", poi premi "Aggancia selezionata".
-# Se il menu resta vuoto, premi "Seleziona area", trascina sul tavolo PokerStars
-# e l'overlay compilerà automaticamente X/Y/W/H senza permessi finestra.
+# Flusso consigliato: premi "Seleziona area", trascina sul tavolo PokerStars
+# e l'overlay compilerà automaticamente X/Y/W/H senza leggere la lista finestre.
+# "Aggiorna finestre" è opzionale e gira in background: se trova PokerStars,
+# scegli la finestra dal menu "Finestra" e premi "Aggancia selezionata".
 # "Manuale ON/OFF" comprime i comandi lasciando visibile la lettura stimata.
 # "Mini HUD" riduce la finestra alla barra utile durante il gioco.
 # "Sempre sopra" decide se l'overlay resta davanti; "Click-through" lascia

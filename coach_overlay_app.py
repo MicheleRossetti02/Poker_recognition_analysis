@@ -232,7 +232,7 @@ def format_estimated_readout(
 
 
 def run_app():
-    from PyQt6.QtCore import QPoint, QRect, Qt, QTimer
+    from PyQt6.QtCore import QObject, QPoint, QRect, Qt, QThread, QTimer, pyqtSignal
     from PyQt6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -250,6 +250,35 @@ def run_app():
         QWidget,
     )
     import sys
+
+    class WindowScanWorker(QObject):
+        finished = pyqtSignal(object, str)
+
+        def run(self):
+            try:
+                from window_capture import WindowCapture
+
+                capture = WindowCapture(allow_fullscreen_fallback=False, auto_detect=False)
+                windows = capture.list_visible_windows(include_non_poker=False)
+                message = f"Trovate {len(windows)} finestre poker."
+                if not windows:
+                    windows = [
+                        w for w in capture.list_visible_windows(include_non_poker=True)
+                        if "poker coach overlay" not in f"{w.get('owner', '')} {w.get('title', '')}".lower()
+                    ]
+                    if windows:
+                        message = (
+                            f"Nessuna finestra poker certa. Mostro {len(windows)} finestre visibili: "
+                            "scegli PokerStars se presente."
+                        )
+                    else:
+                        message = (
+                            "Nessuna finestra leggibile da macOS. Usa Seleziona area: "
+                            "funziona senza lista finestre."
+                        )
+                self.finished.emit(windows, message)
+            except Exception as exc:
+                self.finished.emit([], f"Errore lettura finestre: {exc}. Usa Seleziona area.")
 
     def virtual_screen_geometry():
         screens = QApplication.screens()
@@ -327,6 +356,8 @@ def run_app():
             self.readout_source = "manuale"
             self.window_choices = []
             self.region_picker = None
+            self.window_scan_thread = None
+            self.window_scan_worker = None
             self.mini_mode = False
             self.clickthrough_left = 0
             self.auto_timer = QTimer(self)
@@ -425,6 +456,7 @@ def run_app():
             capture_form.addWidget(self.include_overlay, 2, 2, 1, 2)
             self.window_combo = QComboBox()
             self.window_combo.setMinimumWidth(260)
+            self.window_combo.addItem("Lista non aggiornata: premi Aggiorna finestre o Seleziona area")
             capture_form.addWidget(QLabel("Finestra"), 3, 0)
             capture_form.addWidget(self.window_combo, 3, 1, 1, 3)
 
@@ -468,6 +500,8 @@ def run_app():
             select_area = QPushButton("Seleziona area")
             screenshot = QPushButton("Screenshot")
             self.auto_btn = QPushButton("Auto OFF")
+            self.refresh_windows_btn = refresh_windows
+            select_area.setObjectName("primaryAreaButton")
             calc.clicked.connect(self.calculate)
             demo.clicked.connect(self.load_demo)
             lock_window.clicked.connect(self.lock_poker_window)
@@ -523,10 +557,18 @@ def run_app():
                     background:#5ad17a; color:#06210f; border:0; padding:8px;
                     border-radius:6px; font-weight:800;
                 }
+                QPushButton#primaryAreaButton {
+                    background:#ffcf5a; color:#221800;
+                }
+                QPushButton:disabled {
+                    background:#3b444f; color:#9aa3ad;
+                }
                 QCheckBox { padding:4px; }
             """)
             self.calculate()
-            QTimer.singleShot(250, self.refresh_window_choices)
+            self.capture_status.setText(
+                "Se il menu finestre resta vuoto, premi Seleziona area e trascina sul tavolo."
+            )
 
         def spot(self):
             return OverlaySpot(
@@ -653,34 +695,46 @@ def run_app():
             self.capture_status.setText(f"Agganciata: {window_name} · {bounds}")
 
         def refresh_window_choices(self):
-            try:
-                from window_capture import WindowCapture
+            if self.window_scan_thread and self.window_scan_thread.isRunning():
+                self.capture_status.setText("Sto gia cercando finestre. Puoi usare Seleziona area subito.")
+                return
+            self.window_choices = []
+            self.window_combo.clear()
+            self.window_combo.addItem("Cerco finestre... puoi usare Seleziona area subito")
+            self.window_combo.setEnabled(False)
+            self.refresh_windows_btn.setEnabled(False)
+            self.refresh_windows_btn.setText("Cerco...")
+            self.capture_status.setText("Ricerca finestre in background. Se tarda, premi Seleziona area.")
 
-                capture = WindowCapture(allow_fullscreen_fallback=False)
-                windows = capture.list_visible_windows(include_non_poker=False)
-                if not windows:
-                    windows = [
-                        w for w in capture.list_visible_windows(include_non_poker=True)
-                        if "poker coach overlay" not in f"{w.get('owner', '')} {w.get('title', '')}".lower()
-                    ]
-                self.window_choices = windows
-                self.window_combo.clear()
-                for window in windows:
+            self.window_scan_thread = QThread(self)
+            self.window_scan_worker = WindowScanWorker()
+            self.window_scan_worker.moveToThread(self.window_scan_thread)
+            self.window_scan_thread.started.connect(self.window_scan_worker.run)
+            self.window_scan_worker.finished.connect(self.apply_window_choices)
+            self.window_scan_worker.finished.connect(self.window_scan_thread.quit)
+            self.window_scan_worker.finished.connect(self.window_scan_worker.deleteLater)
+            self.window_scan_thread.finished.connect(self.window_scan_thread.deleteLater)
+            self.window_scan_thread.start()
+
+        def apply_window_choices(self, windows, message):
+            self.window_choices = list(windows or [])
+            self.window_combo.clear()
+            self.window_combo.setEnabled(True)
+            self.refresh_windows_btn.setEnabled(True)
+            self.refresh_windows_btn.setText("Aggiorna finestre")
+            if self.window_choices:
+                for window in self.window_choices:
                     bounds = window["bounds"]
                     name = f"{window['owner']} - {window['title'] or '(senza titolo)'}"
                     self.window_combo.addItem(
                         f"{name[:70]} · {bounds['width']}x{bounds['height']} @ {bounds['x']},{bounds['y']}"
                     )
-                if windows:
-                    self.capture_status.setText(
-                        f"Trovate {len(windows)} finestre. Scegline una e premi Aggancia selezionata."
-                    )
-                else:
-                    self.capture_status.setText(
-                        "Nessuna finestra leggibile. Usa Seleziona area oppure controlla permessi Accessibilita."
-                    )
-            except Exception as exc:
-                self.capture_status.setText(f"Errore lettura finestre: {exc}")
+                self.capture_status.setText(message)
+            else:
+                self.window_combo.addItem("Nessuna finestra trovata: usa Seleziona area")
+                self.capture_status.setText(message)
+            self.window_scan_thread = None
+            self.window_scan_worker = None
 
         def lock_selected_window(self):
             idx = self.window_combo.currentIndex()
@@ -723,21 +777,10 @@ def run_app():
             self.region_picker.activateWindow()
 
         def lock_poker_window(self):
-            try:
-                from window_capture import WindowCapture
-
-                capture = WindowCapture(allow_fullscreen_fallback=False)
-                bounds = capture.get_current_bounds()
-                if not bounds:
-                    self.refresh_window_choices()
-                    self.capture_status.setText(
-                        "Auto non ha trovato una finestra poker. Scegli dal menu e premi Aggancia selezionata."
-                    )
-                    return
-                name = capture.current_window[1] if capture.current_window else "poker"
-                self.set_capture_region_from_bounds(bounds, f"finestra: {name}", name)
-            except Exception as exc:
-                self.capture_status.setText(f"Errore aggancio finestra: {exc}")
+            self.refresh_window_choices()
+            self.capture_status.setText(
+                "Cerco finestre in background. Se il menu resta vuoto, usa Seleziona area."
+            )
 
         def capture_screen(self, mode):
             success = False

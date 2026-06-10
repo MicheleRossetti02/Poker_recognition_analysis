@@ -418,6 +418,13 @@ def test_window_capture_accepts_pokerstars_table_without_poker_title():
     })
 
 
+def test_window_capture_can_skip_initial_detection():
+    from window_capture import WindowCapture
+
+    capture = WindowCapture(auto_detect=False)
+    assert capture.current_bounds is None
+
+
 def test_overlay_estimated_readout_keeps_key_state_visible():
     from coach_overlay_app import OverlaySpot, format_estimated_readout
 
