@@ -4,6 +4,7 @@ Detects poker client windows and provides precise ROI capture
 """
 
 import time
+import subprocess
 import numpy as np
 
 # Try to import Quartz, fallback gracefully
@@ -76,8 +77,8 @@ class WindowCapture:
             refresh_interval: Seconds between window position refreshes
         """
         if not QUARTZ_AVAILABLE:
-            print("❌ Quartz not available. Using fullscreen fallback.")
-            self.mode = 'fullscreen'
+            print("❌ Quartz not available. Using AppleScript window fallback.")
+            self.mode = 'applescript'
         else:
             self.mode = 'window'
         
@@ -100,68 +101,149 @@ class WindowCapture:
         self._window_id_capture_fail = 0
 
         # Try initial detection
-        if self.mode == 'window':
+        if self.mode in ('window', 'applescript'):
             self._refresh_window()
+
+    def list_visible_windows(self, include_non_poker=False):
+        """Return visible app windows with bounds for manual selection."""
+        if QUARTZ_AVAILABLE:
+            windows = self._list_quartz_windows()
+        else:
+            windows = self._list_applescript_windows()
+        if include_non_poker:
+            return windows
+        return [w for w in windows if self._is_candidate_window(w)]
+
+    def _is_candidate_window(self, window):
+        title_l = str(window.get("title", "") or "").lower()
+        owner_l = str(window.get("owner", "") or "").lower()
+        if any(ex in owner_l for ex in self.EXCLUDED_OWNERS):
+            return False
+        text = f"{title_l} {owner_l}"
+        keyword_match = any(k.lower() in text for k in self.keywords)
+        preferred_match = any(p in owner_l or p in title_l for p in self.preferred_owners)
+        if not keyword_match and not preferred_match:
+            return False
+        excluded_title = any(k in title_l for k in self.EXCLUDED_TITLE_KEYWORDS)
+        table_like = any(k in title_l for k in self.TABLE_HINT_KEYWORDS)
+        return not (excluded_title and not table_like)
+
+    def _list_quartz_windows(self):
+        if not QUARTZ_AVAILABLE:
+            return []
+        window_list = CGWindowListCopyWindowInfo(
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID
+        ) or []
+        windows = []
+        for window in window_list:
+            if int(window.get('kCGWindowLayer', 0)) != 0:
+                continue
+            bounds = window.get('kCGWindowBounds', {})
+            bounds_dict = {
+                'x': int(bounds.get('X', 0)),
+                'y': int(bounds.get('Y', 0)),
+                'width': int(bounds.get('Width', 0)),
+                'height': int(bounds.get('Height', 0))
+            }
+            if bounds_dict['width'] < 120 or bounds_dict['height'] < 80:
+                continue
+            windows.append({
+                "id": int(window.get('kCGWindowNumber', 0)),
+                "title": str(window.get('kCGWindowName', '') or ''),
+                "owner": str(window.get('kCGWindowOwnerName', '') or ''),
+                "bounds": bounds_dict,
+                "source": "quartz",
+            })
+        return windows
+
+    def _list_applescript_windows(self):
+        script = [
+            'set out to ""',
+            'tell application "System Events"',
+            'repeat with p in (processes whose background only is false)',
+            'set pname to name of p',
+            'repeat with w in windows of p',
+            'try',
+            'set {x, y} to position of w',
+            'set {ww, hh} to size of w',
+            'set wname to name of w',
+            'set out to out & pname & "|" & wname & "|" & x & "|" & y & "|" & ww & "|" & hh & linefeed',
+            'end try',
+            'end repeat',
+            'end repeat',
+            'end tell',
+            'return out',
+        ]
+        try:
+            proc = subprocess.run(
+                ["osascript"] + sum([["-e", line] for line in script], []),
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except Exception:
+            return []
+        if proc.returncode != 0:
+            return []
+        windows = []
+        for idx, line in enumerate(proc.stdout.splitlines()):
+            parts = line.split("|")
+            if len(parts) != 6:
+                continue
+            owner, title, x, y, width, height = parts
+            try:
+                bounds_dict = {
+                    "x": int(float(x)),
+                    "y": int(float(y)),
+                    "width": int(float(width)),
+                    "height": int(float(height)),
+                }
+            except ValueError:
+                continue
+            if bounds_dict["width"] < 120 or bounds_dict["height"] < 80:
+                continue
+            windows.append({
+                "id": idx + 1,
+                "title": title,
+                "owner": owner,
+                "bounds": bounds_dict,
+                "source": "applescript",
+            })
+        return windows
     
     def find_poker_window(self):
         """
-        Find poker client window using Quartz
+        Find poker client window using Quartz or AppleScript fallback
         
         Returns:
             tuple: (window_id, title, bounds_dict) or None
         """
-        if not QUARTZ_AVAILABLE:
-            return None
-        
         try:
-            # Get all on-screen windows
-            window_list = CGWindowListCopyWindowInfo(
-                kCGWindowListOptionOnScreenOnly,
-                kCGNullWindowID
-            )
-            if not window_list:
+            windows = self.list_visible_windows(include_non_poker=False)
+            if not windows:
                 now = time.time()
                 if now - self._last_no_window_log_ts > 2.0:
-                    print("⚠️  Quartz did not return window list. Waiting for target window...")
+                    print("⚠️  No poker window candidates found. Waiting for target window...")
                     self._last_no_window_log_ts = now
                 return None
 
             candidates = []
 
-            for window in window_list:
-                # Ignore non-standard layers (tooltips/overlays)
-                if int(window.get('kCGWindowLayer', 0)) != 0:
-                    continue
-
-                title = str(window.get('kCGWindowName', '') or '')
-                owner = str(window.get('kCGWindowOwnerName', '') or '')
+            for window in windows:
+                title = str(window.get('title', '') or '')
+                owner = str(window.get('owner', '') or '')
                 title_l = title.lower()
                 owner_l = owner.lower()
-
-                # Hard exclude browsers, even if title contains "poker"
-                if any(ex in owner_l for ex in self.EXCLUDED_OWNERS):
-                    continue
 
                 search_text = f"{title_l} {owner_l}"
                 keyword_match = any(k.lower() in search_text for k in self.keywords)
                 preferred_match = any(p in owner_l or p in title_l for p in self.preferred_owners)
                 table_like = any(k in title_l for k in self.TABLE_HINT_KEYWORDS)
-                excluded_title = any(k in title_l for k in self.EXCLUDED_TITLE_KEYWORDS)
 
-                # Only keep poker-related windows
-                if not keyword_match and not preferred_match:
-                    continue
-                if excluded_title and not table_like:
-                    continue
-
-                window_id = int(window.get('kCGWindowNumber', 0))
-                bounds = window.get('kCGWindowBounds', {})
-                bounds_dict = {
-                    'x': int(bounds.get('X', 0)),
-                    'y': int(bounds.get('Y', 0)),
-                    'width': int(bounds.get('Width', 0)),
-                    'height': int(bounds.get('Height', 0))
-                }
+                window_id = int(window.get('id', 0))
+                bounds_dict = window.get('bounds', {})
 
                 # Skip invalid windows
                 if bounds_dict['width'] < 300 or bounds_dict['height'] < 240:

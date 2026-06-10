@@ -80,6 +80,8 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 
 # Overlay capture dataset
 # Nell'overlay: "Aggancia finestra poker" prova a leggere i bounds della finestra.
+# Se non trova nulla, premi "Aggiorna finestre", scegli la finestra PokerStars
+# dal menu "Finestra", poi premi "Aggancia selezionata".
 # "Manuale ON/OFF" comprime i comandi lasciando visibile la lettura stimata.
 # "Mini HUD" riduce la finestra alla barra utile durante il gioco.
 # "Sempre sopra" decide se l'overlay resta davanti; "Click-through" lascia
@@ -87,7 +89,8 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 # I campi manuali ricalcolano il coach automaticamente dopo una breve pausa.
 # "Screenshot" salva manualmente; "Auto" salva a intervallo in:
 #   dataset/raw/overlay_session_YYYYMMDD_HHMMSS/images/
-# con metadata JSONL accanto alle immagini, inclusa la lettura stimata.
+# con metadata JSONL accanto alle immagini, inclusa la lettura stimata. Se una
+# cattura automatica fallisce, Auto si ferma e mostra l'errore senza chiudere l'app.
 
 # Tests
 python -m pytest tests/ -q

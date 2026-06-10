@@ -394,6 +394,19 @@ def test_overlay_capture_session_falls_back_when_root_unusable(tmp_path):
     assert (session / "images").is_dir()
 
 
+def test_window_capture_accepts_pokerstars_table_without_poker_title():
+    from window_capture import WindowCapture
+
+    capture = object.__new__(WindowCapture)
+    capture.keywords = WindowCapture.POKER_KEYWORDS
+    capture.preferred_owners = ["pokerstars"]
+    assert capture._is_candidate_window({
+        "owner": "PokerStars",
+        "title": "Klumpkea II - No Limit Hold'em 100/200 Soldi virtuali",
+        "bounds": {"x": 90, "y": 70, "width": 980, "height": 710},
+    })
+
+
 def test_overlay_estimated_readout_keeps_key_state_visible():
     from coach_overlay_app import OverlaySpot, format_estimated_readout
 

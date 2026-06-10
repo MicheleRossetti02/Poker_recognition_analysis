@@ -244,10 +244,11 @@ def run_app():
             self.capture_count = 0
             self.last_payload = None
             self.readout_source = "manuale"
+            self.window_choices = []
             self.mini_mode = False
             self.clickthrough_left = 0
             self.auto_timer = QTimer(self)
-            self.auto_timer.timeout.connect(lambda: self.capture_screen("auto"))
+            self.auto_timer.timeout.connect(self.auto_capture_tick)
             self.recalc_timer = QTimer(self)
             self.recalc_timer.setSingleShot(True)
             self.recalc_timer.timeout.connect(self.calculate)
@@ -340,6 +341,10 @@ def run_app():
             capture_form.addWidget(QLabel("Auto s"), 2, 0)
             capture_form.addWidget(self.capture_interval, 2, 1)
             capture_form.addWidget(self.include_overlay, 2, 2, 1, 2)
+            self.window_combo = QComboBox()
+            self.window_combo.setMinimumWidth(260)
+            capture_form.addWidget(QLabel("Finestra"), 3, 0)
+            capture_form.addWidget(self.window_combo, 3, 1, 1, 3)
 
             self.estimated = QLabel("")
             self.estimated.setWordWrap(True)
@@ -376,11 +381,15 @@ def run_app():
             calc = QPushButton("Calcola")
             demo = QPushButton("Demo draw")
             lock_window = QPushButton("Aggancia finestra poker")
+            refresh_windows = QPushButton("Aggiorna finestre")
+            lock_selected = QPushButton("Aggancia selezionata")
             screenshot = QPushButton("Screenshot")
             self.auto_btn = QPushButton("Auto OFF")
             calc.clicked.connect(self.calculate)
             demo.clicked.connect(self.load_demo)
             lock_window.clicked.connect(self.lock_poker_window)
+            refresh_windows.clicked.connect(self.refresh_window_choices)
+            lock_selected.clicked.connect(self.lock_selected_window)
             screenshot.clicked.connect(lambda: self.capture_screen("manual"))
             self.auto_btn.clicked.connect(self.toggle_auto_capture)
             buttons = QHBoxLayout()
@@ -388,6 +397,8 @@ def run_app():
             buttons.addWidget(demo)
             capture_buttons = QHBoxLayout()
             capture_buttons.addWidget(lock_window)
+            capture_buttons.addWidget(refresh_windows)
+            capture_buttons.addWidget(lock_selected)
             capture_buttons.addWidget(screenshot)
             capture_buttons.addWidget(self.auto_btn)
             top_controls = QHBoxLayout()
@@ -430,6 +441,7 @@ def run_app():
                 QCheckBox { padding:4px; }
             """)
             self.calculate()
+            QTimer.singleShot(250, self.refresh_window_choices)
 
         def spot(self):
             return OverlaySpot(
@@ -545,6 +557,59 @@ def run_app():
             self.opponents.setValue(1)
             self.calculate()
 
+        def set_capture_region_from_bounds(self, bounds, source, window_name="poker"):
+            self.capture_x.setValue(int(bounds["x"]))
+            self.capture_y.setValue(int(bounds["y"]))
+            self.capture_w.setValue(int(bounds["width"]))
+            self.capture_h.setValue(int(bounds["height"]))
+            self.move(int(bounds["x"]) + 20, int(bounds["y"]) + 20)
+            self.readout_source = source
+            self.update_estimated_readout()
+            self.capture_status.setText(f"Agganciata: {window_name} · {bounds}")
+
+        def refresh_window_choices(self):
+            try:
+                from window_capture import WindowCapture
+
+                capture = WindowCapture(allow_fullscreen_fallback=False)
+                windows = capture.list_visible_windows(include_non_poker=False)
+                if not windows:
+                    windows = [
+                        w for w in capture.list_visible_windows(include_non_poker=True)
+                        if "poker coach overlay" not in f"{w.get('owner', '')} {w.get('title', '')}".lower()
+                    ]
+                self.window_choices = windows
+                self.window_combo.clear()
+                for window in windows:
+                    bounds = window["bounds"]
+                    name = f"{window['owner']} - {window['title'] or '(senza titolo)'}"
+                    self.window_combo.addItem(
+                        f"{name[:70]} · {bounds['width']}x{bounds['height']} @ {bounds['x']},{bounds['y']}"
+                    )
+                if windows:
+                    self.capture_status.setText(
+                        f"Trovate {len(windows)} finestre. Scegline una e premi Aggancia selezionata."
+                    )
+                else:
+                    self.capture_status.setText(
+                        "Nessuna finestra leggibile. Controlla permessi Accessibilita per Python/Codex."
+                    )
+            except Exception as exc:
+                self.capture_status.setText(f"Errore lettura finestre: {exc}")
+
+        def lock_selected_window(self):
+            idx = self.window_combo.currentIndex()
+            if idx < 0 or idx >= len(self.window_choices):
+                self.capture_status.setText("Nessuna finestra selezionata. Premi Aggiorna finestre.")
+                return
+            window = self.window_choices[idx]
+            name = f"{window['owner']} - {window['title'] or '(senza titolo)'}"
+            self.set_capture_region_from_bounds(
+                window["bounds"],
+                f"finestra: {name}",
+                name,
+            )
+
         def lock_poker_window(self):
             try:
                 from window_capture import WindowCapture
@@ -552,54 +617,68 @@ def run_app():
                 capture = WindowCapture(allow_fullscreen_fallback=False)
                 bounds = capture.get_current_bounds()
                 if not bounds:
-                    self.capture_status.setText("Nessuna finestra poker trovata. Usa coordinate manuali.")
+                    self.refresh_window_choices()
+                    self.capture_status.setText(
+                        "Auto non ha trovato una finestra poker. Scegli dal menu e premi Aggancia selezionata."
+                    )
                     return
-                self.capture_x.setValue(int(bounds["x"]))
-                self.capture_y.setValue(int(bounds["y"]))
-                self.capture_w.setValue(int(bounds["width"]))
-                self.capture_h.setValue(int(bounds["height"]))
-                self.move(int(bounds["x"]) + 20, int(bounds["y"]) + 20)
                 name = capture.current_window[1] if capture.current_window else "poker"
-                self.readout_source = f"finestra: {name}"
-                self.update_estimated_readout()
-                self.capture_status.setText(f"Agganciata: {name} · {bounds}")
+                self.set_capture_region_from_bounds(bounds, f"finestra: {name}", name)
             except Exception as exc:
                 self.capture_status.setText(f"Errore aggancio finestra: {exc}")
 
         def capture_screen(self, mode):
-            self.calculate()
-            region = self.region("manual")
-            if mode == "auto":
-                region.source = "auto"
-            spot = self.spot()
-            advice = self.last_payload
-            if not self.include_overlay.isChecked():
-                self.hide()
-                QApplication.processEvents()
+            success = False
+            hidden = False
             try:
+                self.calculate()
+                region = self.region("manual")
+                if mode == "auto":
+                    region.source = "auto"
+                spot = self.spot()
+                advice = self.last_payload
+                if not self.include_overlay.isChecked():
+                    self.hide()
+                    hidden = True
+                    QApplication.processEvents()
                 screen = QApplication.primaryScreen()
+                if screen is None:
+                    self.capture_status.setText("Screenshot fallito: nessuno schermo disponibile.")
+                    return False
                 pixmap = screen.grabWindow(0, region.x, region.y, region.width, region.height)
                 if pixmap.isNull():
                     self.capture_status.setText("Screenshot fallito: controlla permessi Registrazione Schermo.")
-                    return
+                    return False
                 self.capture_count += 1
                 filename = f"overlay_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png"
                 path = self.capture_session / "images" / filename
                 if not pixmap.save(str(path), "PNG"):
                     self.capture_status.setText(f"Salvataggio fallito: {path}")
-                    return
+                    return False
                 record = capture_metadata(filename, region, spot, advice, mode, self.estimated.text())
                 with (self.capture_session / "metadata.jsonl").open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 self.capture_status.setText(
                     f"Salvati {self.capture_count} screenshot · ultimo: {path.name}"
                 )
+                success = True
             except Exception as exc:
                 self.capture_status.setText(f"Screenshot fallito: {exc}")
             finally:
-                if not self.include_overlay.isChecked():
+                if hidden:
                     self.show()
                     self.raise_()
+            return success
+
+        def auto_capture_tick(self):
+            if not self.capture_screen("auto"):
+                self.auto_timer.stop()
+                self.auto_btn.setText("Auto OFF")
+                self.show()
+                self.raise_()
+                self.capture_status.setText(
+                    f"Auto fermo: ultimo screenshot fallito. {self.capture_status.text()}"
+                )
 
         def toggle_auto_capture(self):
             if self.auto_timer.isActive():
