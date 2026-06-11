@@ -376,11 +376,13 @@ def test_overlay_capture_metadata_is_json_ready(tmp_path):
         {"label": "RAISE to 3"},
         "manual",
         "Lettura stimata: RAISE to 3",
+        {"hero_cards": ["As", "Kh"]},
     )
     assert record["filename"] == "shot.png"
     assert record["readout"] == "Lettura stimata: RAISE to 3"
     assert record["region"]["width"] == 300
     assert record["spot"]["hero_cards"] == "As Kh"
+    assert record["vision"]["hero_cards"] == ["As", "Kh"]
 
 
 def test_overlay_capture_session_falls_back_when_root_unusable(tmp_path):
@@ -463,3 +465,38 @@ def test_overlay_estimated_readout_keeps_key_state_visible():
     assert "fonte finestra: PokerStars" in text
     assert "flush draw" in text
     assert "outs 9" in text
+
+
+def test_overlay_compact_hud_keeps_advice_visible():
+    from coach_overlay_app import OverlaySpot, format_compact_hud
+
+    text = format_compact_hud(
+        OverlaySpot(hero_cards="9d 5s", board_cards="", street="preflop", position="BTN"),
+        {"label": "RAISE to 2", "equity": 0.68, "confidence": 0.8, "outs": 0},
+        "visione area conf 0.77",
+    )
+    assert "RAISE to 2" in text
+    assert "eq 68%" in text
+    assert "Hero 9d 5s" in text
+    assert "outs 0" in text
+
+
+def test_overlay_vision_classifies_cards_by_table_geometry():
+    from overlay_vision import classify_card_detections, normalize_card_name
+
+    state = classify_card_detections(
+        [
+            {"name": "9d", "conf": 0.91, "box": [420, 520, 460, 590]},
+            {"name": "5s", "conf": 0.88, "box": [465, 520, 505, 590]},
+            {"name": "tc", "conf": 0.93, "box": [360, 260, 400, 330]},
+            {"name": "Jh", "conf": 0.90, "box": [410, 260, 450, 330]},
+            {"name": "8h", "conf": 0.89, "box": [460, 260, 500, 330]},
+            {"name": "player_bar", "conf": 0.99, "box": [10, 10, 80, 40]},
+        ],
+        width=900,
+        height=650,
+    )
+    assert normalize_card_name("tc") == "Tc"
+    assert state["hero_cards"] == ["9d", "5s"]
+    assert state["board_cards"] == ["Tc", "Jh", "8h"]
+    assert state["street"] == "flop"

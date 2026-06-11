@@ -152,6 +152,7 @@ def capture_metadata(
     advice: dict[str, object] | None,
     mode: str,
     readout: str = "",
+    vision: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -176,6 +177,7 @@ def capture_metadata(
             "opponents": spot.opponents,
         },
         "advice": advice or {},
+        "vision": vision or {},
     }
 
 
@@ -283,6 +285,26 @@ def format_estimated_readout(
     )
 
 
+def format_compact_hud(
+    spot: OverlaySpot,
+    payload: dict[str, object] | None,
+    source: str = "manuale",
+) -> str:
+    label = str(payload.get("label", "in attesa")) if payload else "in attesa"
+    eq = f"eq {int(round(float(payload['equity']) * 100))}%" if payload and "equity" in payload else "eq --"
+    conf = (
+        f"conf {int(round(float(payload['confidence']) * 100))}%"
+        if payload and "confidence" in payload else "conf --"
+    )
+    hero = spot.hero_cards.strip() or "--"
+    board = spot.board_cards.strip() or "-"
+    outs = f"outs {payload.get('outs', 0)}" if payload else "outs --"
+    return (
+        f"{label} · {eq} · {conf}\n"
+        f"Hero {hero} | Board {board} | {spot.street} {spot.position} | {outs} | {source}"
+    )
+
+
 def run_app():
     from PyQt6.QtCore import QObject, QPoint, QRect, Qt, QThread, QTimer, pyqtSignal
     from PyQt6.QtWidgets import (
@@ -364,6 +386,31 @@ def run_app():
                 lines.append("Usa Seleziona area; poi abilita Accessibilita/Registrazione schermo se serve.")
             self.finished.emit(" | ".join(lines))
 
+    class VisionReadWorker(QObject):
+        finished = pyqtSignal(object, str)
+
+        def __init__(self, image_path):
+            super().__init__()
+            self.image_path = image_path
+
+        def run(self):
+            try:
+                from overlay_vision import infer_table_state
+
+                state = infer_table_state(self.image_path)
+                hero = " ".join(state.get("hero_cards", [])) or "--"
+                board = " ".join(state.get("board_cards", [])) or "-"
+                det_count = len(state.get("detections", []))
+                message = f"Lettura carte: Hero {hero} | Board {board} | det {det_count}"
+                self.finished.emit(state, message)
+            except ModuleNotFoundError as exc:
+                self.finished.emit(
+                    {},
+                    f"Lettura carte non disponibile: manca dipendenza {exc.name}. Apri con venv/overlay vision.",
+                )
+            except Exception as exc:
+                self.finished.emit({}, f"Lettura carte fallita: {exc}")
+
     def virtual_screen_geometry():
         screens = QApplication.screens()
         if not screens:
@@ -437,6 +484,7 @@ def run_app():
             self.capture_session = create_capture_session()
             self.capture_count = 0
             self.last_payload = None
+            self.last_vision_state = None
             self.readout_source = "manuale"
             self.window_choices = []
             self.region_picker = None
@@ -444,6 +492,8 @@ def run_app():
             self.window_scan_worker = None
             self.diag_thread = None
             self.diag_worker = None
+            self.vision_thread = None
+            self.vision_worker = None
             self.simple_area_mode = False
             self.mini_mode = False
             self.clickthrough_left = 0
@@ -492,6 +542,8 @@ def run_app():
             self.capture_interval.setDecimals(1)
             self.include_overlay = QCheckBox("Includi overlay nello screenshot")
             self.include_overlay.setChecked(False)
+            self.auto_read_cards = QCheckBox("Lettura carte")
+            self.auto_read_cards.setChecked(True)
 
             for widget in (
                 self.hero,
@@ -547,11 +599,12 @@ def run_app():
             capture_form.addWidget(self.capture_auto_label, 2, 0)
             capture_form.addWidget(self.capture_interval, 2, 1)
             capture_form.addWidget(self.include_overlay, 2, 2, 1, 2)
+            capture_form.addWidget(self.auto_read_cards, 3, 2, 1, 2)
             self.window_combo = QComboBox()
             self.window_combo.setMinimumWidth(260)
             self.window_combo.addItem("Lista non aggiornata: premi Aggiorna finestre o Seleziona area")
-            capture_form.addWidget(self.capture_window_label, 3, 0)
-            capture_form.addWidget(self.window_combo, 3, 1, 1, 3)
+            capture_form.addWidget(self.capture_window_label, 4, 0)
+            capture_form.addWidget(self.window_combo, 4, 1, 1, 3)
 
             self.estimated = QLabel("")
             self.estimated.setWordWrap(True)
@@ -578,6 +631,8 @@ def run_app():
             self.toggle_manual_btn.clicked.connect(self.toggle_manual_panel)
             self.mini_btn = QPushButton("Mini HUD")
             self.mini_btn.clicked.connect(self.toggle_mini_mode)
+            self.quick_read_btn = QPushButton("Leggi")
+            self.quick_read_btn.clicked.connect(self.read_table_from_area)
             self.always_top = QCheckBox("Sempre sopra")
             self.always_top.setChecked(True)
             self.always_top.toggled.connect(self.set_always_on_top)
@@ -588,6 +643,7 @@ def run_app():
             self.opacity_slider.setValue(int(DEFAULT_OVERLAY_OPACITY * 100))
             self.opacity_slider.setFixedWidth(100)
             self.opacity_slider.valueChanged.connect(self.set_overlay_opacity)
+            self.opacity_text_label = QLabel("Opacita")
             self.opacity_label = QLabel("94%")
             calc = QPushButton("Calcola")
             demo = QPushButton("Demo draw")
@@ -596,6 +652,7 @@ def run_app():
             lock_selected = QPushButton("Aggancia selezionata")
             select_area = QPushButton("Seleziona area")
             use_saved_area = QPushButton("Usa area salvata")
+            read_table = QPushButton("Leggi tavolo")
             simple_area = QPushButton("Solo area")
             diagnose = QPushButton("Diagnostica")
             screenshot = QPushButton("Screenshot")
@@ -604,8 +661,16 @@ def run_app():
             self.lock_window_btn = lock_window
             self.lock_selected_btn = lock_selected
             self.use_saved_area_btn = use_saved_area
+            self.read_table_btn = read_table
             self.simple_area_btn = simple_area
             self.diagnose_btn = diagnose
+            self.compact_controls = [
+                self.always_top,
+                self.clickthrough_btn,
+                self.opacity_text_label,
+                self.opacity_slider,
+                self.opacity_label,
+            ]
             self.advanced_capture_widgets = [
                 self.capture_x_label,
                 self.capture_x,
@@ -629,6 +694,7 @@ def run_app():
             lock_selected.clicked.connect(self.lock_selected_window)
             select_area.clicked.connect(self.start_region_picker)
             use_saved_area.clicked.connect(self.use_saved_capture_region)
+            read_table.clicked.connect(self.read_table_from_area)
             simple_area.clicked.connect(self.toggle_simple_area_mode)
             diagnose.clicked.connect(self.run_permission_diagnostics)
             screenshot.clicked.connect(lambda: self.capture_screen("manual"))
@@ -642,6 +708,7 @@ def run_app():
             capture_buttons.addWidget(lock_selected)
             capture_buttons.addWidget(select_area)
             capture_buttons.addWidget(use_saved_area)
+            capture_buttons.addWidget(read_table)
             capture_buttons.addWidget(simple_area)
             capture_buttons.addWidget(diagnose)
             capture_buttons.addWidget(screenshot)
@@ -649,9 +716,10 @@ def run_app():
             top_controls = QHBoxLayout()
             top_controls.addWidget(self.toggle_manual_btn)
             top_controls.addWidget(self.mini_btn)
+            top_controls.addWidget(self.quick_read_btn)
             top_controls.addWidget(self.always_top)
             top_controls.addWidget(self.clickthrough_btn)
-            top_controls.addWidget(QLabel("Opacita"))
+            top_controls.addWidget(self.opacity_text_label)
             top_controls.addWidget(self.opacity_slider)
             top_controls.addWidget(self.opacity_label)
 
@@ -667,9 +735,9 @@ def run_app():
             manual_layout.addWidget(self.capture_status)
 
             layout = QVBoxLayout(self)
-            title = QLabel("Poker Coach Overlay")
-            title.setStyleSheet("font-size:18px;font-weight:800;color:#5ad17a;")
-            layout.addWidget(title)
+            self.title_label = QLabel("Poker Coach Overlay")
+            self.title_label.setStyleSheet("font-size:18px;font-weight:800;color:#5ad17a;")
+            layout.addWidget(self.title_label)
             layout.addWidget(self.estimated)
             layout.addLayout(top_controls)
             layout.addWidget(self.mode_status)
@@ -699,6 +767,7 @@ def run_app():
                     "Se il menu finestre resta vuoto, premi Seleziona area e trascina sul tavolo."
                 )
             self.set_simple_area_mode(True, preserve_status=loaded_region)
+            self.set_mini_mode(True)
 
         def spot(self):
             return OverlaySpot(
@@ -742,11 +811,16 @@ def run_app():
             self.recalc_timer.start(350)
 
         def update_estimated_readout(self, *args):
-            self.estimated.setText(
-                format_estimated_readout(self.spot(), self.last_payload, self.readout_source)
-            )
+            if self.mini_mode:
+                text = format_compact_hud(self.spot(), self.last_payload, self.readout_source)
+            else:
+                text = format_estimated_readout(self.spot(), self.last_payload, self.readout_source)
+            self.estimated.setText(text)
 
         def toggle_manual_panel(self):
+            if self.mini_mode:
+                self.set_mini_mode(False)
+                return
             visible = not self.manual_panel.isVisible()
             self.manual_panel.setVisible(visible)
             self.toggle_manual_btn.setText("Manuale ON" if visible else "Manuale OFF")
@@ -756,13 +830,27 @@ def run_app():
             self.adjustSize()
 
         def toggle_mini_mode(self):
-            self.mini_mode = not self.mini_mode
+            self.set_mini_mode(not self.mini_mode)
+
+        def set_mini_mode(self, enabled):
+            self.mini_mode = bool(enabled)
             self.manual_panel.setVisible(not self.mini_mode)
             self.mode_status.setVisible(not self.mini_mode)
-            self.toggle_manual_btn.setText("Manuale OFF" if self.mini_mode else "Manuale ON")
+            self.title_label.setVisible(not self.mini_mode)
+            for widget in self.compact_controls:
+                widget.setVisible(not self.mini_mode)
+            self.toggle_manual_btn.setText("Espandi" if self.mini_mode else "Manuale ON")
             self.mini_btn.setText("HUD piena" if self.mini_mode else "Mini HUD")
-            self.setMinimumWidth(360 if self.mini_mode else 430)
-            self.resize(420 if self.mini_mode else 520, self.height())
+            self.setMinimumWidth(320 if self.mini_mode else 430)
+            self.setMaximumWidth(520 if self.mini_mode else 16777215)
+            self.estimated.setWordWrap(True)
+            self.estimated.setStyleSheet(
+                "font-weight:900;color:#ffcf5a;padding:6px;"
+                "border:1px solid #39414b;border-radius:6px;background:#11161b;"
+                + ("font-size:12px;" if self.mini_mode else "")
+            )
+            self.update_estimated_readout()
+            self.resize(440 if self.mini_mode else 720, 120 if self.mini_mode else max(720, self.height()))
             self.adjustSize()
 
         def set_always_on_top(self, enabled):
@@ -1005,6 +1093,108 @@ def run_app():
             self.region_picker.raise_()
             self.region_picker.activateWindow()
 
+        def read_table_from_area(self):
+            if self.vision_thread and self.vision_thread.isRunning():
+                self.capture_status.setText("Lettura carte gia in corso.")
+                self.estimated.setText("Lettura carte gia in corso...")
+                return
+            hidden = False
+            try:
+                region = self.active_region()
+                self.hide()
+                hidden = True
+                QApplication.processEvents()
+                screen = QApplication.primaryScreen()
+                if screen is None:
+                    self.capture_status.setText("Lettura carte fallita: nessuno schermo disponibile.")
+                    if self.mini_mode:
+                        self.estimated.setText("Lettura carte fallita: nessuno schermo disponibile.")
+                    return
+                pixmap = screen.grabWindow(0, region.x, region.y, region.width, region.height)
+                if pixmap.isNull():
+                    self.capture_status.setText(
+                        "Lettura carte fallita: controlla permessi Registrazione Schermo."
+                    )
+                    if self.mini_mode:
+                        self.estimated.setText("Lettura carte fallita: controlla Registrazione Schermo.")
+                    return
+                path = self.capture_session / "vision_latest.png"
+                if not pixmap.save(str(path), "PNG"):
+                    self.capture_status.setText(f"Lettura carte fallita: non salvo {path}")
+                    if self.mini_mode:
+                        self.estimated.setText("Lettura carte fallita: non riesco a salvare lo screenshot.")
+                    return
+            finally:
+                if hidden:
+                    self.show()
+                    self.raise_()
+            self.start_vision_read(path)
+
+        def start_vision_read(self, image_path):
+            if self.vision_thread and self.vision_thread.isRunning():
+                return
+            self.read_table_btn.setEnabled(False)
+            self.quick_read_btn.setEnabled(False)
+            self.read_table_btn.setText("Leggo...")
+            self.quick_read_btn.setText("Leggo...")
+            self.set_progress(True, "Lettura carte in corso...")
+            self.estimated.setText("Lettura carte in corso...")
+            self.vision_thread = QThread(self)
+            self.vision_worker = VisionReadWorker(str(image_path))
+            self.vision_worker.moveToThread(self.vision_thread)
+            self.vision_thread.started.connect(self.vision_worker.run)
+            self.vision_worker.finished.connect(self.apply_vision_read)
+            self.vision_worker.finished.connect(self.vision_thread.quit)
+            self.vision_worker.finished.connect(self.vision_worker.deleteLater)
+            self.vision_thread.finished.connect(self.vision_thread.deleteLater)
+            self.vision_thread.start()
+
+        def apply_vision_read(self, state, message):
+            self.set_progress(False)
+            self.read_table_btn.setEnabled(True)
+            self.quick_read_btn.setEnabled(True)
+            self.read_table_btn.setText("Leggi tavolo")
+            self.quick_read_btn.setText("Leggi")
+            self.vision_thread = None
+            self.vision_worker = None
+            if not state:
+                self.capture_status.setText(message)
+                if self.mini_mode:
+                    self.estimated.setText(f"{message}\nPremi Espandi per inserire le carte manualmente.")
+                else:
+                    self.update_estimated_readout()
+                return
+
+            self.last_vision_state = dict(state)
+            hero_cards = list(state.get("hero_cards", []) or [])
+            board_cards = list(state.get("board_cards", []) or [])
+            updates = []
+
+            if len(hero_cards) == 2:
+                self.hero.setText(" ".join(hero_cards))
+                updates.append("hero")
+
+            if len(board_cards) in (0, 3, 4, 5):
+                self.board.setText(" ".join(board_cards))
+                self.street.setCurrentText(
+                    {0: "preflop", 3: "flop", 4: "turn", 5: "river"}[len(board_cards)]
+                )
+                updates.append("board")
+
+            conf = state.get("confidence", 0.0)
+            self.readout_source = f"visione area conf {float(conf):.2f}"
+            if updates:
+                self.calculate()
+                self.capture_status.setText(f"{message} | aggiornato: {', '.join(updates)}")
+            else:
+                det_count = len(state.get("detections", []))
+                text = f"{message} | nessuna coppia hero affidabile; detection grezze: {det_count}"
+                self.capture_status.setText(text)
+                if self.mini_mode:
+                    self.estimated.setText(f"{text}\nPremi Espandi per correggere manualmente.")
+                else:
+                    self.update_estimated_readout()
+
         def lock_poker_window(self):
             self.refresh_window_choices()
             self.capture_status.setText(
@@ -1039,7 +1229,15 @@ def run_app():
                 if not pixmap.save(str(path), "PNG"):
                     self.capture_status.setText(f"Salvataggio fallito: {path}")
                     return False
-                record = capture_metadata(filename, region, spot, advice, mode, self.estimated.text())
+                record = capture_metadata(
+                    filename,
+                    region,
+                    spot,
+                    advice,
+                    mode,
+                    self.estimated.text(),
+                    self.last_vision_state,
+                )
                 with (self.capture_session / "metadata.jsonl").open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(record, ensure_ascii=False) + "\n")
                 self.capture_status.setText(
@@ -1052,6 +1250,8 @@ def run_app():
                 if hidden:
                     self.show()
                     self.raise_()
+            if success and self.auto_read_cards.isChecked():
+                self.read_table_from_area()
             return success
 
         def auto_capture_tick(self):
