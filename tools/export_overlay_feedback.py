@@ -154,8 +154,12 @@ def build_html_report(rows: list[dict[str, object]], summary: dict[str, object],
             )
         status = html.escape(str(row.get("status", "")))
         status_class = "ok" if status == "ok" else "review"
+        search_text = html.escape(" ".join(str(row.get(key, "")) for key in (
+            "status", "detected_hero", "corrected_hero", "detected_board",
+            "corrected_board", "detected_street", "corrected_street",
+        )).lower())
         body_rows.append(
-            "<tr>"
+            f'<tr data-status="{status}" data-search="{search_text}">'
             f'<td><span class="pill {status_class}">{status}</span></td>'
             f"<td>{html.escape(str(row.get('detected_hero', '')))}"
             f"<br><strong>{html.escape(str(row.get('corrected_hero', '')))}</strong></td>"
@@ -176,6 +180,8 @@ def build_html_report(rows: list[dict[str, object]], summary: dict[str, object],
     body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; background: #11161b; color: #e8eaed; }}
     h1 {{ margin: 0 0 8px; color: #5ad17a; }}
     .summary {{ display: flex; gap: 18px; flex-wrap: wrap; margin: 16px 0; }}
+    .controls {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 18px 0; }}
+    input, select {{ background: #0f1216; color: #e8eaed; border: 1px solid #303945; border-radius: 6px; padding: 9px 10px; }}
     .box {{ background: #1b2129; border: 1px solid #303945; border-radius: 8px; padding: 12px 14px; }}
     table {{ width: 100%; border-collapse: collapse; background: #161c23; }}
     th, td {{ border-bottom: 1px solid #2b333d; padding: 10px; text-align: left; vertical-align: top; }}
@@ -196,6 +202,19 @@ def build_html_report(rows: list[dict[str, object]], summary: dict[str, object],
     <div class="box"><strong>OK rate</strong><br>{float(summary.get("ok_rate", 0.0)):.1%}</div>
     <div class="box"><strong>Status</strong><ul>{status_items}</ul></div>
   </div>
+  <div class="controls">
+    <label>Filtro status
+      <select id="statusFilter">
+        <option value="all">Tutti</option>
+        <option value="review">Solo review</option>
+        <option value="ok">Solo OK</option>
+      </select>
+    </label>
+    <label>Cerca
+      <input id="searchBox" type="search" placeholder="es. As Kh, fix_hero, flop">
+    </label>
+    <span id="visibleCount"></span>
+  </div>
   <table>
     <thead>
       <tr><th>Status</th><th>Hero<br>detected/corrected</th><th>Board<br>detected/corrected</th><th>Street</th><th>Conf</th><th>Debug</th></tr>
@@ -204,6 +223,29 @@ def build_html_report(rows: list[dict[str, object]], summary: dict[str, object],
       {''.join(body_rows) if body_rows else '<tr><td colspan="6">No feedback records yet.</td></tr>'}
     </tbody>
   </table>
+  <script>
+    const statusFilter = document.getElementById('statusFilter');
+    const searchBox = document.getElementById('searchBox');
+    const visibleCount = document.getElementById('visibleCount');
+    const rows = Array.from(document.querySelectorAll('tbody tr[data-status]'));
+    function applyFilters() {{
+      const status = statusFilter.value;
+      const query = searchBox.value.trim().toLowerCase();
+      let visible = 0;
+      for (const row of rows) {{
+        const rowStatus = row.dataset.status || '';
+        const statusOk = status === 'all' || (status === 'review' ? rowStatus !== 'ok' : rowStatus === status);
+        const queryOk = !query || (row.dataset.search || '').includes(query);
+        const show = statusOk && queryOk;
+        row.style.display = show ? '' : 'none';
+        if (show) visible += 1;
+      }}
+      visibleCount.textContent = `${{visible}} / ${{rows.length}} righe visibili`;
+    }}
+    statusFilter.addEventListener('change', applyFilters);
+    searchBox.addEventListener('input', applyFilters);
+    applyFilters();
+  </script>
 </body>
 </html>
 """
@@ -241,6 +283,16 @@ def export_feedback(
         writer.writeheader()
         writer.writerows(rows)
 
+    ok_rows = [row for row in rows if row["status"] == "ok"]
+    review_rows = [row for row in rows if row["status"] != "ok"]
+    ok_csv_path = out_dir / "ok.csv"
+    review_csv_path = out_dir / "needs_review.csv"
+    for path, subset in ((ok_csv_path, ok_rows), (review_csv_path, review_rows)):
+        with path.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(subset)
+
     summary = summarize(records)
     summary_path = out_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -272,6 +324,8 @@ def export_feedback(
 
     return {
         "csv": csv_path,
+        "ok_csv": ok_csv_path,
+        "needs_review_csv": review_csv_path,
         "summary": summary_path,
         "manifest": manifest_path,
         "report": report_path,
@@ -291,6 +345,8 @@ def main() -> int:
     print(f"Feedback records: {summary['total']}")
     print(f"OK rate: {summary['ok_rate']:.1%}")
     print(f"CSV: {outputs['csv']}")
+    print(f"Needs review CSV: {outputs['needs_review_csv']}")
+    print(f"OK CSV: {outputs['ok_csv']}")
     print(f"Summary: {outputs['summary']}")
     print(f"Report: {outputs['report']}")
     return 0

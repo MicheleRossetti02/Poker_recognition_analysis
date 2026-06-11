@@ -105,6 +105,7 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 # con rilevazione grezza + correzione umana.
 # Esporta feedback raccolto in CSV/summary/report HTML per analisi o retraining:
 #   venv312/bin/python tools/export_overlay_feedback.py dataset/raw --out dataset/overlay_feedback_export --copy-images
+# L'export crea anche needs_review.csv e ok.csv; report.html ha filtro status/search.
 # Se la lettura non è affidabile, copia immagine+JSON in vision_failures/
 # per usarli come esempi da annotare/fine-tunare.
 # "Sempre sopra" decide se l'overlay resta davanti; "Click-through" lascia
