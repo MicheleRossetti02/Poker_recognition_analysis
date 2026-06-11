@@ -412,10 +412,13 @@ def test_overlay_region_config_roundtrip(tmp_path):
         CaptureRegion,
         capture_region_summary,
         load_saved_region,
+        load_saved_vision_zones,
         load_overlay_config,
+        relative_region,
         region_from_config,
         region_to_config,
         save_overlay_config,
+        save_vision_zone,
     )
 
     path = tmp_path / "overlay.json"
@@ -425,6 +428,14 @@ def test_overlay_region_config_roundtrip(tmp_path):
     assert loaded == original
     assert load_saved_region(path) == original
     assert capture_region_summary(original) == "1111x739 @ 100,124 (area selezionata)"
+    rel = relative_region(
+        CaptureRegion(180, 240, 120, 90, "screen"),
+        CaptureRegion(100, 200, 500, 400, "table"),
+        "hero_zone",
+    )
+    assert rel == CaptureRegion(80, 40, 120, 90, "hero_zone")
+    save_vision_zone("hero", rel, path)
+    assert load_saved_vision_zones(path)["hero"] == rel
 
 
 def test_window_capture_accepts_pokerstars_table_without_poker_title():
@@ -507,6 +518,29 @@ def test_overlay_vision_classifies_cards_by_table_geometry():
     assert state["street"] == "flop"
     assert vision_is_actionable(state)
     assert "OK: Hero 9d 5s" in vision_summary(state)
+
+
+def test_overlay_vision_uses_calibrated_zones():
+    from overlay_vision import classify_card_detections
+
+    state = classify_card_detections(
+        [
+            {"name": "As", "conf": 0.91, "box": [80, 80, 120, 150]},
+            {"name": "Kh", "conf": 0.90, "box": [130, 80, 170, 150]},
+            {"name": "Qh", "conf": 0.92, "box": [250, 180, 290, 250]},
+            {"name": "7c", "conf": 0.91, "box": [300, 180, 340, 250]},
+            {"name": "2h", "conf": 0.89, "box": [350, 180, 390, 250]},
+        ],
+        width=700,
+        height=500,
+        zones={
+            "hero": {"x": 70, "y": 70, "width": 120, "height": 100},
+            "board": {"x": 230, "y": 160, "width": 190, "height": 120},
+        },
+    )
+    assert state["hero_cards"] == ["As", "Kh"]
+    assert state["board_cards"] == ["Qh", "7c", "2h"]
+    assert state["zones"]["hero"]["width"] == 120
 
 
 def test_overlay_vision_summary_marks_partial_reads():

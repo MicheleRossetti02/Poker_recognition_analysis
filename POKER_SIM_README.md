@@ -85,6 +85,9 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 # e ricaricato al prossimo avvio.
 # "Solo area" nasconde i controlli finestra/coordinate e lascia il flusso rapido:
 # Seleziona area / Usa area salvata -> Screenshot/Auto.
+# Per rendere la lettura carte più stabile: apri "HUD piena", premi "Area Hero"
+# e seleziona solo le due carte hero, poi "Area Board" e seleziona la zona
+# community card. Le zone sono salvate relative al tavolo e riusate da "Leggi".
 # "Aggiorna finestre" è opzionale e gira in background: se trova PokerStars,
 # scegli la finestra dal menu "Finestra" e premi "Aggancia selezionata".
 # "Diagnostica" controlla Quartz, lettura finestre macOS e suggerisce i permessi

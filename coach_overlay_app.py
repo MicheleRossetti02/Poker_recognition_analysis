@@ -126,6 +126,46 @@ def capture_region_summary(region: CaptureRegion) -> str:
     return f"{region.width}x{region.height} @ {region.x},{region.y} ({region.source})"
 
 
+def relative_region(selected: CaptureRegion, base: CaptureRegion, source: str) -> CaptureRegion | None:
+    left = max(selected.x, base.x)
+    top = max(selected.y, base.y)
+    right = min(selected.x + selected.width, base.x + base.width)
+    bottom = min(selected.y + selected.height, base.y + base.height)
+    if right <= left or bottom <= top:
+        return None
+    return CaptureRegion(
+        x=left - base.x,
+        y=top - base.y,
+        width=right - left,
+        height=bottom - top,
+        source=source,
+    )
+
+
+def load_saved_vision_zones(path: Path = CONFIG_PATH) -> dict[str, CaptureRegion]:
+    config = load_overlay_config(path)
+    zones = config.get("vision_zones", {})
+    if not isinstance(zones, dict):
+        return {}
+    out = {}
+    for key in ("hero", "board"):
+        region = region_from_config(zones.get(key))
+        if region is not None:
+            out[key] = region
+    return out
+
+
+def save_vision_zone(kind: str, region: CaptureRegion, path: Path = CONFIG_PATH) -> None:
+    config = load_overlay_config(path)
+    zones = config.get("vision_zones")
+    if not isinstance(zones, dict):
+        zones = {}
+    zones[kind] = region_to_config(region)
+    config["vision_zones"] = zones
+    config["last_saved_at"] = datetime.now().isoformat(timespec="seconds")
+    save_overlay_config(config, path)
+
+
 def create_capture_session(
     root: Path = DEFAULT_CAPTURE_ROOT,
     fallback_root: Path | None = None,
@@ -390,16 +430,17 @@ def run_app():
     class VisionReadWorker(QObject):
         finished = pyqtSignal(object, str)
 
-        def __init__(self, image_path, debug_dir):
+        def __init__(self, image_path, debug_dir, zones=None):
             super().__init__()
             self.image_path = image_path
             self.debug_dir = Path(debug_dir)
+            self.zones = zones or {}
 
         def run(self):
             try:
                 from overlay_vision import infer_table_state, save_annotated_image, vision_is_actionable, vision_summary
 
-                state = infer_table_state(self.image_path)
+                state = infer_table_state(self.image_path, zones=self.zones)
                 self.debug_dir.mkdir(parents=True, exist_ok=True)
                 annotated = self.debug_dir / "annotated_latest.png"
                 if save_annotated_image(self.image_path, state, annotated):
@@ -437,7 +478,7 @@ def run_app():
         return geo
 
     class RegionPicker(QWidget):
-        def __init__(self, on_done):
+        def __init__(self, on_done, hint_text="Trascina sul tavolo poker. Esc annulla."):
             super().__init__()
             self.on_done = on_done
             self.origin_global = QPoint()
@@ -451,7 +492,7 @@ def run_app():
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
             self.setCursor(Qt.CursorShape.CrossCursor)
             self.setGeometry(virtual_screen_geometry())
-            self.hint = QLabel("Trascina sul tavolo poker. Esc annulla.", self)
+            self.hint = QLabel(hint_text, self)
             self.hint.setStyleSheet(
                 "background:#11161b;color:#ffcf5a;padding:10px;"
                 "border:1px solid #5ad17a;border-radius:6px;font-weight:800;"
@@ -501,6 +542,8 @@ def run_app():
             self.capture_count = 0
             self.last_payload = None
             self.last_vision_state = None
+            self.hero_zone = None
+            self.board_zone = None
             self.readout_source = "manuale"
             self.window_choices = []
             self.region_picker = None
@@ -669,6 +712,8 @@ def run_app():
             select_area = QPushButton("Seleziona area")
             use_saved_area = QPushButton("Usa area salvata")
             read_table = QPushButton("Leggi tavolo")
+            hero_zone_btn = QPushButton("Area Hero")
+            board_zone_btn = QPushButton("Area Board")
             simple_area = QPushButton("Solo area")
             diagnose = QPushButton("Diagnostica")
             screenshot = QPushButton("Screenshot")
@@ -678,6 +723,8 @@ def run_app():
             self.lock_selected_btn = lock_selected
             self.use_saved_area_btn = use_saved_area
             self.read_table_btn = read_table
+            self.hero_zone_btn = hero_zone_btn
+            self.board_zone_btn = board_zone_btn
             self.simple_area_btn = simple_area
             self.diagnose_btn = diagnose
             self.compact_controls = [
@@ -711,6 +758,8 @@ def run_app():
             select_area.clicked.connect(self.start_region_picker)
             use_saved_area.clicked.connect(self.use_saved_capture_region)
             read_table.clicked.connect(self.read_table_from_area)
+            hero_zone_btn.clicked.connect(lambda: self.start_zone_picker("hero"))
+            board_zone_btn.clicked.connect(lambda: self.start_zone_picker("board"))
             simple_area.clicked.connect(self.toggle_simple_area_mode)
             diagnose.clicked.connect(self.run_permission_diagnostics)
             screenshot.clicked.connect(lambda: self.capture_screen("manual"))
@@ -725,6 +774,8 @@ def run_app():
             capture_buttons.addWidget(select_area)
             capture_buttons.addWidget(use_saved_area)
             capture_buttons.addWidget(read_table)
+            capture_buttons.addWidget(hero_zone_btn)
+            capture_buttons.addWidget(board_zone_btn)
             capture_buttons.addWidget(simple_area)
             capture_buttons.addWidget(diagnose)
             capture_buttons.addWidget(screenshot)
@@ -783,6 +834,7 @@ def run_app():
                     "Se il menu finestre resta vuoto, premi Seleziona area e trascina sul tavolo."
                 )
             self.set_simple_area_mode(True, preserve_status=loaded_region)
+            self.load_saved_vision_zones()
             self.set_mini_mode(True)
 
         def spot(self):
@@ -811,6 +863,22 @@ def run_app():
 
         def active_region_status(self, prefix="Area attiva"):
             return f"{prefix}: {capture_region_summary(self.active_region())}"
+
+        def vision_zones_for_model(self):
+            zones = {}
+            if self.hero_zone is not None:
+                zones["hero"] = region_to_config(self.hero_zone)
+            if self.board_zone is not None:
+                zones["board"] = region_to_config(self.board_zone)
+            return zones
+
+        def vision_zone_status(self):
+            parts = []
+            if self.hero_zone is not None:
+                parts.append(f"Hero {capture_region_summary(self.hero_zone)}")
+            if self.board_zone is not None:
+                parts.append(f"Board {capture_region_summary(self.board_zone)}")
+            return " | ".join(parts) if parts else "Zone hero/board non calibrate."
 
         def calculate(self):
             self.recalc_timer.stop()
@@ -962,6 +1030,13 @@ def run_app():
                 "Nessuna area salvata: premi Seleziona area e trascina sul tavolo poker."
             )
 
+        def load_saved_vision_zones(self):
+            zones = load_saved_vision_zones()
+            self.hero_zone = zones.get("hero")
+            self.board_zone = zones.get("board")
+            if zones:
+                self.capture_status.setText("Zone visione caricate. " + self.vision_zone_status())
+
         def save_current_capture_region(self, source="selected"):
             region = CaptureRegion(
                 self.capture_x.value(),
@@ -1109,6 +1184,42 @@ def run_app():
             self.region_picker.raise_()
             self.region_picker.activateWindow()
 
+        def start_zone_picker(self, kind):
+            label = "Hero" if kind == "hero" else "Board"
+            base = self.active_region()
+            self.capture_status.setText(
+                f"Seleziona area {label}: trascina il riquadro dentro l'area tavolo salvata."
+            )
+            self.hide()
+
+            def finish(region):
+                self.show()
+                self.raise_()
+                self.region_picker = None
+                if region is None:
+                    self.capture_status.setText(f"Selezione area {label} annullata o troppo piccola.")
+                    return
+                rel = relative_region(region, base, f"{kind}_zone")
+                if rel is None:
+                    self.capture_status.setText(
+                        f"Area {label} fuori dal tavolo: prima premi Seleziona area sul tavolo intero."
+                    )
+                    return
+                if kind == "hero":
+                    self.hero_zone = rel
+                else:
+                    self.board_zone = rel
+                save_vision_zone(kind, rel)
+                self.capture_status.setText(f"Area {label} salvata. {self.vision_zone_status()}")
+
+            self.region_picker = RegionPicker(
+                finish,
+                f"Trascina solo l'area {label}. Deve stare dentro il tavolo selezionato. Esc annulla.",
+            )
+            self.region_picker.show()
+            self.region_picker.raise_()
+            self.region_picker.activateWindow()
+
         def read_table_from_area(self):
             if self.vision_thread and self.vision_thread.isRunning():
                 self.capture_status.setText("Lettura carte gia in corso.")
@@ -1156,7 +1267,11 @@ def run_app():
             self.set_progress(True, "Lettura carte in corso...")
             self.estimated.setText("Lettura carte in corso...")
             self.vision_thread = QThread(self)
-            self.vision_worker = VisionReadWorker(str(image_path), str(self.capture_session / "vision_debug"))
+            self.vision_worker = VisionReadWorker(
+                str(image_path),
+                str(self.capture_session / "vision_debug"),
+                self.vision_zones_for_model(),
+            )
             self.vision_worker.moveToThread(self.vision_thread)
             self.vision_thread.started.connect(self.vision_worker.run)
             self.vision_worker.finished.connect(self.apply_vision_read)

@@ -87,6 +87,7 @@ def classify_card_detections(
     width: int,
     height: int,
     conf: float = 0.30,
+    zones: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     """Split detected card boxes into hero and board candidates.
 
@@ -101,11 +102,13 @@ def classify_card_detections(
         if det is not None and det.conf >= conf
     ]
 
-    hero_pool = [
+    hero_zone = _zone_tuple((zones or {}).get("hero"))
+    board_zone = _zone_tuple((zones or {}).get("board"))
+    hero_pool = _cards_in_zone(cards, hero_zone) if hero_zone else [
         det for det in cards
         if det.cy >= h * 0.56 and w * 0.24 <= det.cx <= w * 0.76
     ]
-    board_pool = [
+    board_pool = _cards_in_zone(cards, board_zone) if board_zone else [
         det for det in cards
         if h * 0.28 <= det.cy <= h * 0.66 and w * 0.18 <= det.cx <= w * 0.82
     ]
@@ -131,7 +134,46 @@ def classify_card_detections(
         "detections": [det.to_dict() for det in cards],
         "hero_detections": [det.to_dict() for det in hero],
         "board_detections": [det.to_dict() for det in board],
+        "zones": {
+            "hero": _zone_dict(hero_zone),
+            "board": _zone_dict(board_zone),
+        },
     }
+
+
+def _zone_tuple(zone: Mapping[str, object] | None) -> tuple[float, float, float, float] | None:
+    if not isinstance(zone, Mapping):
+        return None
+    try:
+        x = float(zone["x"])
+        y = float(zone["y"])
+        width = float(zone["width"])
+        height = float(zone["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return x, y, x + width, y + height
+
+
+def _zone_dict(zone: tuple[float, float, float, float] | None) -> dict[str, object] | None:
+    if zone is None:
+        return None
+    x1, y1, x2, y2 = zone
+    return {
+        "x": round(x1, 1),
+        "y": round(y1, 1),
+        "width": round(x2 - x1, 1),
+        "height": round(y2 - y1, 1),
+    }
+
+
+def _cards_in_zone(
+    cards: Iterable[CardDetection],
+    zone: tuple[float, float, float, float],
+) -> list[CardDetection]:
+    x1, y1, x2, y2 = zone
+    return [det for det in cards if x1 <= det.cx <= x2 and y1 <= det.cy <= y2]
 
 
 def vision_is_actionable(state: Mapping[str, object]) -> bool:
@@ -167,6 +209,28 @@ def save_annotated_image(
 
     hero = {d.get("name") for d in state.get("hero_detections", []) or []}
     board = {d.get("name") for d in state.get("board_detections", []) or []}
+    for zone_name, color in (("hero", (80, 220, 80)), ("board", (70, 170, 255))):
+        zone = (state.get("zones") or {}).get(zone_name)
+        if not isinstance(zone, Mapping):
+            continue
+        try:
+            x1 = int(round(float(zone["x"])))
+            y1 = int(round(float(zone["y"])))
+            x2 = int(round(x1 + float(zone["width"])))
+            y2 = int(round(y1 + float(zone["height"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, 3)
+        cv2.putText(
+            image,
+            zone_name.upper(),
+            (x1, max(18, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.65,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
     for det in state.get("raw_detections", []) or state.get("detections", []) or []:
         box = det.get("box", [])
         if not isinstance(box, list) or len(box) != 4:
@@ -211,6 +275,7 @@ def infer_table_state(
     model_path: str | Path = DEFAULT_MODEL,
     conf: float = 0.12,
     classify_conf: float = 0.30,
+    zones: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, object]:
     model_path = Path(model_path)
     if not model_path.exists():
@@ -232,7 +297,7 @@ def infer_table_state(
         })
 
     height, width = result.orig_shape[:2]
-    out = classify_card_detections(detections, width, height, conf=classify_conf)
+    out = classify_card_detections(detections, width, height, conf=classify_conf, zones=zones)
     out["raw_detections"] = [
         {
             "name": det["name"],
