@@ -84,7 +84,7 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 # L'ultimo rettangolo selezionato viene salvato in ~/.poker_coach_overlay.json
 # e ricaricato al prossimo avvio.
 # "Solo area" nasconde i controlli finestra/coordinate e lascia il flusso rapido:
-# Seleziona area -> Screenshot/Auto.
+# Seleziona area / Usa area salvata -> Screenshot/Auto.
 # "Aggiorna finestre" è opzionale e gira in background: se trova PokerStars,
 # scegli la finestra dal menu "Finestra" e premi "Aggancia selezionata".
 # "Diagnostica" controlla Quartz, lettura finestre macOS e suggerisce i permessi

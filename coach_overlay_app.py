@@ -117,6 +117,14 @@ def region_from_config(config: dict[str, object] | None) -> CaptureRegion | None
         return None
 
 
+def load_saved_region(path: Path = CONFIG_PATH) -> CaptureRegion | None:
+    return region_from_config(load_overlay_config(path).get("last_region"))
+
+
+def capture_region_summary(region: CaptureRegion) -> str:
+    return f"{region.width}x{region.height} @ {region.x},{region.y} ({region.source})"
+
+
 def create_capture_session(
     root: Path = DEFAULT_CAPTURE_ROOT,
     fallback_root: Path | None = None,
@@ -587,6 +595,7 @@ def run_app():
             refresh_windows = QPushButton("Aggiorna finestre")
             lock_selected = QPushButton("Aggancia selezionata")
             select_area = QPushButton("Seleziona area")
+            use_saved_area = QPushButton("Usa area salvata")
             simple_area = QPushButton("Solo area")
             diagnose = QPushButton("Diagnostica")
             screenshot = QPushButton("Screenshot")
@@ -594,6 +603,7 @@ def run_app():
             self.refresh_windows_btn = refresh_windows
             self.lock_window_btn = lock_window
             self.lock_selected_btn = lock_selected
+            self.use_saved_area_btn = use_saved_area
             self.simple_area_btn = simple_area
             self.diagnose_btn = diagnose
             self.advanced_capture_widgets = [
@@ -618,6 +628,7 @@ def run_app():
             refresh_windows.clicked.connect(self.refresh_window_choices)
             lock_selected.clicked.connect(self.lock_selected_window)
             select_area.clicked.connect(self.start_region_picker)
+            use_saved_area.clicked.connect(self.use_saved_capture_region)
             simple_area.clicked.connect(self.toggle_simple_area_mode)
             diagnose.clicked.connect(self.run_permission_diagnostics)
             screenshot.clicked.connect(lambda: self.capture_screen("manual"))
@@ -630,6 +641,7 @@ def run_app():
             capture_buttons.addWidget(refresh_windows)
             capture_buttons.addWidget(lock_selected)
             capture_buttons.addWidget(select_area)
+            capture_buttons.addWidget(use_saved_area)
             capture_buttons.addWidget(simple_area)
             capture_buttons.addWidget(diagnose)
             capture_buttons.addWidget(screenshot)
@@ -681,11 +693,12 @@ def run_app():
                 QCheckBox { padding:4px; }
             """)
             self.calculate()
-            self.load_saved_capture_region()
-            self.capture_status.setText(
-                "Se il menu finestre resta vuoto, premi Seleziona area e trascina sul tavolo."
-            )
-            self.set_simple_area_mode(True)
+            loaded_region = self.load_saved_capture_region()
+            if not loaded_region:
+                self.capture_status.setText(
+                    "Se il menu finestre resta vuoto, premi Seleziona area e trascina sul tavolo."
+                )
+            self.set_simple_area_mode(True, preserve_status=loaded_region)
 
         def spot(self):
             return OverlaySpot(
@@ -707,6 +720,12 @@ def run_app():
                 height=self.capture_h.value(),
                 source=source,
             )
+
+        def active_region(self):
+            return self.region(self.readout_source or "manuale")
+
+        def active_region_status(self, prefix="Area attiva"):
+            return f"{prefix}: {capture_region_summary(self.active_region())}"
 
         def calculate(self):
             self.recalc_timer.stop()
@@ -810,13 +829,14 @@ def run_app():
             self.readout_source = source
             self.update_estimated_readout()
             self.save_current_capture_region(source)
-            self.capture_status.setText(f"Agganciata: {window_name} · {bounds}")
+            self.capture_status.setText(
+                f"Agganciata: {window_name} · {self.active_region_status()}"
+            )
 
         def load_saved_capture_region(self):
-            config = load_overlay_config()
-            region = region_from_config(config.get("last_region"))
+            region = load_saved_region()
             if region is None:
-                return
+                return False
             self.capture_x.setValue(region.x)
             self.capture_y.setValue(region.y)
             self.capture_w.setValue(region.width)
@@ -824,7 +844,18 @@ def run_app():
             self.readout_source = region.source or "area salvata"
             self.update_estimated_readout()
             self.capture_status.setText(
-                f"Area salvata caricata: {region.width}x{region.height} @ {region.x},{region.y}"
+                f"Area salvata caricata: {capture_region_summary(region)}"
+            )
+            return True
+
+        def use_saved_capture_region(self):
+            if self.load_saved_capture_region():
+                self.capture_status.setText(
+                    f"Area salvata pronta. {self.active_region_status()}"
+                )
+                return
+            self.capture_status.setText(
+                "Nessuna area salvata: premi Seleziona area e trascina sul tavolo poker."
             )
 
         def save_current_capture_region(self, source="selected"):
@@ -843,16 +874,23 @@ def run_app():
         def toggle_simple_area_mode(self):
             self.set_simple_area_mode(not self.simple_area_mode)
 
-        def set_simple_area_mode(self, enabled):
+        def set_simple_area_mode(self, enabled, preserve_status=False):
             self.simple_area_mode = bool(enabled)
             for widget in self.advanced_capture_widgets:
                 widget.setVisible(not self.simple_area_mode)
             self.simple_area_btn.setText("Area semplice ON" if self.simple_area_mode else "Solo area")
-            self.capture_status.setText(
-                "Modalita area semplice: usa Seleziona area, Screenshot e Auto."
-                if self.simple_area_mode
-                else "Modalita avanzata: puoi usare lista finestre e coordinate."
-            )
+            if preserve_status:
+                return
+            if self.simple_area_mode:
+                self.capture_status.setText(
+                    "Modalita area semplice: usa Seleziona area, Usa area salvata, Screenshot e Auto. "
+                    + self.active_region_status()
+                )
+            else:
+                self.capture_status.setText(
+                    "Modalita avanzata: puoi usare lista finestre e coordinate. "
+                    + self.active_region_status()
+                )
 
         def set_progress(self, active, message=None):
             self.progress.setVisible(bool(active))
@@ -978,9 +1016,9 @@ def run_app():
             hidden = False
             try:
                 self.calculate()
-                region = self.region("manual")
+                region = self.active_region()
                 if mode == "auto":
-                    region.source = "auto"
+                    region.source = f"auto: {region.source}"
                 spot = self.spot()
                 advice = self.last_payload
                 if not self.include_overlay.isChecked():
