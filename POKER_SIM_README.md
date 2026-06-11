@@ -103,7 +103,7 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 # Se la preview mostra carte sbagliate, correggi i campi Hero/Board/Street e
 # premi "Conferma carte": salva un record in vision_feedback/feedback.jsonl
 # con rilevazione grezza + correzione umana.
-# Esporta feedback raccolto in CSV/summary per analisi o retraining:
+# Esporta feedback raccolto in CSV/summary/report HTML per analisi o retraining:
 #   venv312/bin/python tools/export_overlay_feedback.py dataset/raw --out dataset/overlay_feedback_export --copy-images
 # Se la lettura non è affidabile, copia immagine+JSON in vision_failures/
 # per usarli come esempi da annotare/fine-tunare.

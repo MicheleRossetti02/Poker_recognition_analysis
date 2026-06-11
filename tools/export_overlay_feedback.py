@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
 import shutil
 from collections import Counter
@@ -127,6 +128,87 @@ def summarize(records: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def _rel_asset(path: str, base: Path) -> str:
+    if not path:
+        return ""
+    p = Path(path)
+    try:
+        return html.escape(str(p.relative_to(base)))
+    except ValueError:
+        return html.escape(str(p))
+
+
+def build_html_report(rows: list[dict[str, object]], summary: dict[str, object], out_dir: Path) -> str:
+    status_items = "".join(
+        f"<li><strong>{html.escape(str(key))}</strong>: {value}</li>"
+        for key, value in summary.get("status_counts", {}).items()
+    )
+    body_rows = []
+    for row in rows:
+        image_path = str(row.get("copied_debug_image") or row.get("debug_image") or "")
+        image_html = ""
+        if image_path:
+            image_html = (
+                f'<a href="{_rel_asset(image_path, out_dir)}">'
+                f'<img src="{_rel_asset(image_path, out_dir)}" alt="debug"></a>'
+            )
+        status = html.escape(str(row.get("status", "")))
+        status_class = "ok" if status == "ok" else "review"
+        body_rows.append(
+            "<tr>"
+            f'<td><span class="pill {status_class}">{status}</span></td>'
+            f"<td>{html.escape(str(row.get('detected_hero', '')))}"
+            f"<br><strong>{html.escape(str(row.get('corrected_hero', '')))}</strong></td>"
+            f"<td>{html.escape(str(row.get('detected_board', '')))}"
+            f"<br><strong>{html.escape(str(row.get('corrected_board', '')))}</strong></td>"
+            f"<td>{html.escape(str(row.get('detected_street', '')))}"
+            f"<br><strong>{html.escape(str(row.get('corrected_street', '')))}</strong></td>"
+            f"<td>{html.escape(str(row.get('confidence', '')))}</td>"
+            f"<td>{image_html}</td>"
+            "</tr>"
+        )
+    return f"""<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <title>Overlay Feedback Report</title>
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 24px; background: #11161b; color: #e8eaed; }}
+    h1 {{ margin: 0 0 8px; color: #5ad17a; }}
+    .summary {{ display: flex; gap: 18px; flex-wrap: wrap; margin: 16px 0; }}
+    .box {{ background: #1b2129; border: 1px solid #303945; border-radius: 8px; padding: 12px 14px; }}
+    table {{ width: 100%; border-collapse: collapse; background: #161c23; }}
+    th, td {{ border-bottom: 1px solid #2b333d; padding: 10px; text-align: left; vertical-align: top; }}
+    th {{ color: #9aa3ad; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }}
+    img {{ max-width: 220px; max-height: 140px; border: 1px solid #39414b; border-radius: 6px; }}
+    .pill {{ display: inline-block; padding: 4px 8px; border-radius: 999px; font-weight: 700; font-size: 12px; }}
+    .ok {{ background: #163d25; color: #73e397; }}
+    .review {{ background: #4b3512; color: #ffcf5a; }}
+    strong {{ color: #ffffff; }}
+  </style>
+</head>
+<body>
+  <h1>Overlay Feedback Report</h1>
+  <div class="summary">
+    <div class="box"><strong>Total</strong><br>{summary.get("total", 0)}</div>
+    <div class="box"><strong>OK</strong><br>{summary.get("ok", 0)}</div>
+    <div class="box"><strong>Review</strong><br>{summary.get("needs_review", 0)}</div>
+    <div class="box"><strong>OK rate</strong><br>{float(summary.get("ok_rate", 0.0)):.1%}</div>
+    <div class="box"><strong>Status</strong><ul>{status_items}</ul></div>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Status</th><th>Hero<br>detected/corrected</th><th>Board<br>detected/corrected</th><th>Street</th><th>Conf</th><th>Debug</th></tr>
+    </thead>
+    <tbody>
+      {''.join(body_rows) if body_rows else '<tr><td colspan="6">No feedback records yet.</td></tr>'}
+    </tbody>
+  </table>
+</body>
+</html>
+"""
+
+
 def export_feedback(
     records: list[dict[str, object]],
     out_dir: Path = DEFAULT_OUTPUT,
@@ -159,8 +241,9 @@ def export_feedback(
         writer.writeheader()
         writer.writerows(rows)
 
+    summary = summarize(records)
     summary_path = out_dir / "summary.json"
-    summary_path.write_text(json.dumps(summarize(records), ensure_ascii=False, indent=2), encoding="utf-8")
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     manifest_path = out_dir / "manifest.jsonl"
     with manifest_path.open("w", encoding="utf-8") as fh:
@@ -184,10 +267,14 @@ def export_feedback(
             writer.writeheader()
             writer.writerows(rows)
 
+    report_path = out_dir / "report.html"
+    report_path.write_text(build_html_report(rows, summary, out_dir), encoding="utf-8")
+
     return {
         "csv": csv_path,
         "summary": summary_path,
         "manifest": manifest_path,
+        "report": report_path,
     }
 
 
@@ -205,6 +292,7 @@ def main() -> int:
     print(f"OK rate: {summary['ok_rate']:.1%}")
     print(f"CSV: {outputs['csv']}")
     print(f"Summary: {outputs['summary']}")
+    print(f"Report: {outputs['report']}")
     return 0
 
 

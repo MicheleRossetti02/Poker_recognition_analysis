@@ -625,3 +625,7 @@ def test_export_overlay_feedback_builds_csv_and_summary(tmp_path):
     out = export_feedback(records, tmp_path / "export")
     assert out["csv"].read_text(encoding="utf-8").startswith("timestamp,status")
     assert json.loads(out["summary"].read_text(encoding="utf-8"))["total"] == 1
+    report = out["report"].read_text(encoding="utf-8")
+    assert "Overlay Feedback Report" in report
+    assert "fix_hero" in report
+    assert "As Kh" in report
