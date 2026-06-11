@@ -192,6 +192,14 @@ def vision_summary(state: Mapping[str, object]) -> str:
     return f"{status}: Hero {hero} | Board {board} | conf {conf:.2f} | det {det_count}/{raw_count}"
 
 
+def debug_image_path(state: Mapping[str, object]) -> str:
+    for key in ("annotated_image", "failure_image", "image"):
+        value = state.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
 def save_annotated_image(
     image_path: str | Path,
     state: Mapping[str, object],

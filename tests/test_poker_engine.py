@@ -544,7 +544,12 @@ def test_overlay_vision_uses_calibrated_zones():
 
 
 def test_overlay_vision_summary_marks_partial_reads():
-    from overlay_vision import classify_card_detections, vision_is_actionable, vision_summary
+    from overlay_vision import (
+        classify_card_detections,
+        debug_image_path,
+        vision_is_actionable,
+        vision_summary,
+    )
 
     state = classify_card_detections(
         [{"name": "9d", "conf": 0.91, "box": [420, 520, 460, 590]}],
@@ -553,3 +558,5 @@ def test_overlay_vision_summary_marks_partial_reads():
     )
     assert not vision_is_actionable(state)
     assert "DA VERIFICARE" in vision_summary(state)
+    assert debug_image_path({"annotated_image": "annotated.png", "image": "raw.png"}) == "annotated.png"
+    assert debug_image_path({"failure_image": "failure.png", "image": "raw.png"}) == "failure.png"

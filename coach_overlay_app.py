@@ -347,7 +347,8 @@ def format_compact_hud(
 
 
 def run_app():
-    from PyQt6.QtCore import QObject, QPoint, QRect, Qt, QThread, QTimer, pyqtSignal
+    from PyQt6.QtCore import QObject, QPoint, QRect, Qt, QThread, QTimer, QUrl, pyqtSignal
+    from PyQt6.QtGui import QDesktopServices, QPixmap
     from PyQt6.QtWidgets import (
         QApplication,
         QCheckBox,
@@ -542,6 +543,7 @@ def run_app():
             self.capture_count = 0
             self.last_payload = None
             self.last_vision_state = None
+            self.latest_debug_path = None
             self.hero_zone = None
             self.board_zone = None
             self.readout_source = "manuale"
@@ -714,6 +716,7 @@ def run_app():
             read_table = QPushButton("Leggi tavolo")
             hero_zone_btn = QPushButton("Area Hero")
             board_zone_btn = QPushButton("Area Board")
+            open_debug = QPushButton("Apri debug")
             simple_area = QPushButton("Solo area")
             diagnose = QPushButton("Diagnostica")
             screenshot = QPushButton("Screenshot")
@@ -725,6 +728,7 @@ def run_app():
             self.read_table_btn = read_table
             self.hero_zone_btn = hero_zone_btn
             self.board_zone_btn = board_zone_btn
+            self.open_debug_btn = open_debug
             self.simple_area_btn = simple_area
             self.diagnose_btn = diagnose
             self.compact_controls = [
@@ -760,6 +764,7 @@ def run_app():
             read_table.clicked.connect(self.read_table_from_area)
             hero_zone_btn.clicked.connect(lambda: self.start_zone_picker("hero"))
             board_zone_btn.clicked.connect(lambda: self.start_zone_picker("board"))
+            open_debug.clicked.connect(self.open_latest_debug)
             simple_area.clicked.connect(self.toggle_simple_area_mode)
             diagnose.clicked.connect(self.run_permission_diagnostics)
             screenshot.clicked.connect(lambda: self.capture_screen("manual"))
@@ -776,6 +781,7 @@ def run_app():
             capture_buttons.addWidget(read_table)
             capture_buttons.addWidget(hero_zone_btn)
             capture_buttons.addWidget(board_zone_btn)
+            capture_buttons.addWidget(open_debug)
             capture_buttons.addWidget(simple_area)
             capture_buttons.addWidget(diagnose)
             capture_buttons.addWidget(screenshot)
@@ -800,6 +806,14 @@ def run_app():
             manual_layout.addLayout(capture_buttons)
             manual_layout.addWidget(self.progress)
             manual_layout.addWidget(self.capture_status)
+            self.debug_preview = QLabel("Nessun debug vision ancora.")
+            self.debug_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.debug_preview.setMinimumHeight(120)
+            self.debug_preview.setStyleSheet(
+                "background:#0f1216;border:1px solid #2a3038;border-radius:6px;"
+                "color:#9aa3ad;padding:6px;"
+            )
+            manual_layout.addWidget(self.debug_preview)
 
             layout = QVBoxLayout(self)
             self.title_label = QLabel("Poker Coach Overlay")
@@ -879,6 +893,36 @@ def run_app():
             if self.board_zone is not None:
                 parts.append(f"Board {capture_region_summary(self.board_zone)}")
             return " | ".join(parts) if parts else "Zone hero/board non calibrate."
+
+        def update_debug_preview(self, path):
+            self.latest_debug_path = str(path) if path else None
+            if not self.latest_debug_path:
+                self.debug_preview.setText("Nessun debug vision ancora.")
+                self.debug_preview.setPixmap(QPixmap())
+                return
+            pixmap = QPixmap(self.latest_debug_path)
+            if pixmap.isNull():
+                self.debug_preview.setText(f"Debug non leggibile: {Path(self.latest_debug_path).name}")
+                return
+            scaled = pixmap.scaled(
+                420,
+                180,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.debug_preview.setPixmap(scaled)
+            self.debug_preview.setToolTip(self.latest_debug_path)
+
+        def open_latest_debug(self):
+            if not self.latest_debug_path:
+                self.capture_status.setText("Nessun debug da aprire: premi Leggi prima.")
+                return
+            path = Path(self.latest_debug_path)
+            if not path.exists():
+                self.capture_status.setText(f"Debug non trovato: {path}")
+                return
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+            self.capture_status.setText(f"Aperto debug: {path.name}")
 
         def calculate(self):
             self.recalc_timer.stop()
@@ -1297,6 +1341,12 @@ def run_app():
                 return
 
             self.last_vision_state = dict(state)
+            try:
+                from overlay_vision import debug_image_path
+
+                self.update_debug_preview(debug_image_path(state))
+            except Exception:
+                pass
             hero_cards = list(state.get("hero_cards", []) or [])
             board_cards = list(state.get("board_cards", []) or [])
             updates = []
