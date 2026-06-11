@@ -93,7 +93,10 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 # L'app parte in HUD compatta: mostra azione/equity/carte e il pulsante "Leggi".
 # "HUD piena" riapre il pannello completo; "Leggi tavolo" usa il modello YOLO
 # su uno screenshot dell'area selezionata e aggiorna Hero/Board/Street quando
-# riconosce abbastanza carte.
+# riconosce abbastanza carte. Ogni lettura salva anche un debug annotato in:
+#   dataset/raw/overlay_session_YYYYMMDD_HHMMSS/vision_debug/
+# Se la lettura non è affidabile, copia immagine+JSON in vision_failures/
+# per usarli come esempi da annotare/fine-tunare.
 # "Sempre sopra" decide se l'overlay resta davanti; "Click-through" lascia
 # passare i click al tavolo per 10s; "Opacita" regola la trasparenza.
 # I campi manuali ricalcolano il coach automaticamente dopo una breve pausa.

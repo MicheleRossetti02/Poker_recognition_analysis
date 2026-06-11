@@ -482,7 +482,12 @@ def test_overlay_compact_hud_keeps_advice_visible():
 
 
 def test_overlay_vision_classifies_cards_by_table_geometry():
-    from overlay_vision import classify_card_detections, normalize_card_name
+    from overlay_vision import (
+        classify_card_detections,
+        normalize_card_name,
+        vision_is_actionable,
+        vision_summary,
+    )
 
     state = classify_card_detections(
         [
@@ -500,3 +505,17 @@ def test_overlay_vision_classifies_cards_by_table_geometry():
     assert state["hero_cards"] == ["9d", "5s"]
     assert state["board_cards"] == ["Tc", "Jh", "8h"]
     assert state["street"] == "flop"
+    assert vision_is_actionable(state)
+    assert "OK: Hero 9d 5s" in vision_summary(state)
+
+
+def test_overlay_vision_summary_marks_partial_reads():
+    from overlay_vision import classify_card_detections, vision_is_actionable, vision_summary
+
+    state = classify_card_detections(
+        [{"name": "9d", "conf": 0.91, "box": [420, 520, 460, 590]}],
+        width=900,
+        height=650,
+    )
+    assert not vision_is_actionable(state)
+    assert "DA VERIFICARE" in vision_summary(state)

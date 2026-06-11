@@ -16,6 +16,7 @@ DEFAULT_MODEL = Path("POKER_GTO_BOT_V3/weights/best.pt")
 RANKS = set("23456789TJQKA")
 SUITS = set("cdhs")
 _MODEL_CACHE = {}
+VALID_BOARD_COUNTS = {0, 3, 4, 5}
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,69 @@ def classify_card_detections(
     }
 
 
+def vision_is_actionable(state: Mapping[str, object]) -> bool:
+    hero = state.get("hero_cards", [])
+    board = state.get("board_cards", [])
+    return isinstance(hero, list) and len(hero) == 2 and isinstance(board, list) and len(board) in VALID_BOARD_COUNTS
+
+
+def vision_summary(state: Mapping[str, object]) -> str:
+    hero = " ".join(state.get("hero_cards", []) or []) or "--"
+    board = " ".join(state.get("board_cards", []) or []) or "-"
+    det_count = len(state.get("detections", []) or [])
+    raw_count = len(state.get("raw_detections", []) or [])
+    conf = float(state.get("confidence", 0.0) or 0.0)
+    status = "OK" if vision_is_actionable(state) else "DA VERIFICARE"
+    return f"{status}: Hero {hero} | Board {board} | conf {conf:.2f} | det {det_count}/{raw_count}"
+
+
+def save_annotated_image(
+    image_path: str | Path,
+    state: Mapping[str, object],
+    out_path: str | Path,
+) -> bool:
+    """Save a debug image with raw/card boxes. Returns False if cv2 is missing."""
+    try:
+        import cv2
+    except Exception:
+        return False
+
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return False
+
+    hero = {d.get("name") for d in state.get("hero_detections", []) or []}
+    board = {d.get("name") for d in state.get("board_detections", []) or []}
+    for det in state.get("raw_detections", []) or state.get("detections", []) or []:
+        box = det.get("box", [])
+        if not isinstance(box, list) or len(box) != 4:
+            continue
+        x1, y1, x2, y2 = [int(round(float(v))) for v in box]
+        name = str(det.get("name", "?"))
+        conf = float(det.get("conf", 0.0) or 0.0)
+        if name in hero:
+            color = (80, 220, 80)
+        elif name in board:
+            color = (70, 170, 255)
+        else:
+            color = (80, 80, 255) if conf < 0.30 else (220, 220, 80)
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, 2)
+        cv2.putText(
+            image,
+            f"{name} {conf:.2f}",
+            (x1, max(16, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    return bool(cv2.imwrite(str(out_path), image))
+
+
 def _load_model(model_path: Path):
     key = str(model_path.resolve())
     if key not in _MODEL_CACHE:
@@ -145,7 +209,8 @@ def _load_model(model_path: Path):
 def infer_table_state(
     image_path: str | Path,
     model_path: str | Path = DEFAULT_MODEL,
-    conf: float = 0.30,
+    conf: float = 0.12,
+    classify_conf: float = 0.30,
 ) -> dict[str, object]:
     model_path = Path(model_path)
     if not model_path.exists():
@@ -167,7 +232,17 @@ def infer_table_state(
         })
 
     height, width = result.orig_shape[:2]
-    out = classify_card_detections(detections, width, height, conf=conf)
+    out = classify_card_detections(detections, width, height, conf=classify_conf)
+    out["raw_detections"] = [
+        {
+            "name": det["name"],
+            "conf": round(float(det["conf"]), 4),
+            "box": [round(float(v), 1) for v in det["box"]],
+        }
+        for det in detections
+    ]
     out["image"] = str(image_path)
     out["model"] = str(model_path)
+    out["actionable"] = vision_is_actionable(out)
+    out["summary"] = vision_summary(out)
     return out

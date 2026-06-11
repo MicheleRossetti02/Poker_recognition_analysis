@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -389,19 +390,34 @@ def run_app():
     class VisionReadWorker(QObject):
         finished = pyqtSignal(object, str)
 
-        def __init__(self, image_path):
+        def __init__(self, image_path, debug_dir):
             super().__init__()
             self.image_path = image_path
+            self.debug_dir = Path(debug_dir)
 
         def run(self):
             try:
-                from overlay_vision import infer_table_state
+                from overlay_vision import infer_table_state, save_annotated_image, vision_is_actionable, vision_summary
 
                 state = infer_table_state(self.image_path)
-                hero = " ".join(state.get("hero_cards", [])) or "--"
-                board = " ".join(state.get("board_cards", [])) or "-"
-                det_count = len(state.get("detections", []))
-                message = f"Lettura carte: Hero {hero} | Board {board} | det {det_count}"
+                self.debug_dir.mkdir(parents=True, exist_ok=True)
+                annotated = self.debug_dir / "annotated_latest.png"
+                if save_annotated_image(self.image_path, state, annotated):
+                    state["annotated_image"] = str(annotated)
+                if not vision_is_actionable(state):
+                    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+                    failure_dir = self.debug_dir / "vision_failures"
+                    failure_dir.mkdir(parents=True, exist_ok=True)
+                    failure_image = failure_dir / f"failure_{stamp}.png"
+                    failure_json = failure_dir / f"failure_{stamp}.json"
+                    try:
+                        shutil.copy2(self.image_path, failure_image)
+                        state["failure_image"] = str(failure_image)
+                        failure_json.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+                        state["failure_json"] = str(failure_json)
+                    except OSError:
+                        pass
+                message = "Lettura carte: " + vision_summary(state)
                 self.finished.emit(state, message)
             except ModuleNotFoundError as exc:
                 self.finished.emit(
@@ -1140,7 +1156,7 @@ def run_app():
             self.set_progress(True, "Lettura carte in corso...")
             self.estimated.setText("Lettura carte in corso...")
             self.vision_thread = QThread(self)
-            self.vision_worker = VisionReadWorker(str(image_path))
+            self.vision_worker = VisionReadWorker(str(image_path), str(self.capture_session / "vision_debug"))
             self.vision_worker.moveToThread(self.vision_thread)
             self.vision_thread.started.connect(self.vision_worker.run)
             self.vision_worker.finished.connect(self.apply_vision_read)
@@ -1185,10 +1201,18 @@ def run_app():
             self.readout_source = f"visione area conf {float(conf):.2f}"
             if updates:
                 self.calculate()
-                self.capture_status.setText(f"{message} | aggiornato: {', '.join(updates)}")
+                debug_path = state.get("annotated_image") or ""
+                debug_tail = f" | debug: {Path(str(debug_path)).name}" if debug_path else ""
+                self.capture_status.setText(f"{message} | aggiornato: {', '.join(updates)}{debug_tail}")
             else:
                 det_count = len(state.get("detections", []))
-                text = f"{message} | nessuna coppia hero affidabile; detection grezze: {det_count}"
+                raw_count = len(state.get("raw_detections", []))
+                debug_path = state.get("annotated_image") or state.get("failure_image") or ""
+                debug_tail = f" | debug: {Path(str(debug_path)).name}" if debug_path else ""
+                text = (
+                    f"{message} | nessuna coppia hero affidabile; "
+                    f"detection: {det_count}/{raw_count}{debug_tail}"
+                )
                 self.capture_status.setText(text)
                 if self.mini_mode:
                     self.estimated.setText(f"{text}\nPremi Espandi per correggere manualmente.")
