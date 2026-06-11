@@ -1,5 +1,6 @@
 """Tests for the self-contained poker engine. Run: python -m pytest tests/ -q"""
 
+import json
 import random
 import sys
 from pathlib import Path
@@ -582,3 +583,45 @@ def test_overlay_vision_summary_marks_partial_reads():
     assert "DA VERIFICARE" in vision_summary(state)
     assert debug_image_path({"annotated_image": "annotated.png", "image": "raw.png"}) == "annotated.png"
     assert debug_image_path({"failure_image": "failure.png", "image": "raw.png"}) == "failure.png"
+
+
+def test_export_overlay_feedback_builds_csv_and_summary(tmp_path):
+    from tools.export_overlay_feedback import (
+        export_feedback,
+        feedback_row,
+        load_feedback,
+        summarize,
+    )
+
+    feedback_file = tmp_path / "overlay_session_x" / "vision_feedback" / "feedback.jsonl"
+    feedback_file.parent.mkdir(parents=True)
+    feedback_file.write_text(
+        json.dumps({
+            "timestamp": "2026-06-11T10:00:00",
+            "image": "vision_latest.png",
+            "annotated_image": "annotated.png",
+            "detected": {
+                "hero_cards": ["As", "Qh"],
+                "board_cards": ["Qh", "7c", "2h"],
+                "street": "flop",
+                "confidence": 0.42,
+            },
+            "corrected": {
+                "hero_cards": ["As", "Kh"],
+                "board_cards": ["Qh", "7c", "2h"],
+                "street": "flop",
+            },
+            "match": {"hero": False, "board": True, "street": True},
+        }) + "\n",
+        encoding="utf-8",
+    )
+    records = load_feedback([tmp_path])
+    assert len(records) == 1
+    row = feedback_row(records[0])
+    assert row["status"] == "fix_hero"
+    assert row["corrected_hero"] == "As Kh"
+    summary = summarize(records)
+    assert summary["needs_review"] == 1
+    out = export_feedback(records, tmp_path / "export")
+    assert out["csv"].read_text(encoding="utf-8").startswith("timestamp,status")
+    assert json.loads(out["summary"].read_text(encoding="utf-8"))["total"] == 1
