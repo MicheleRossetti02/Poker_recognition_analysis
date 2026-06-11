@@ -100,6 +100,9 @@ venv/bin/python coach_overlay_app.py  # always-on-top manual coach + screenshot 
 #   dataset/raw/overlay_session_YYYYMMDD_HHMMSS/vision_debug/
 # Il pannello espanso mostra una preview dell'ultimo debug; "Apri debug" apre
 # l'immagine annotata nel viewer macOS.
+# Se la preview mostra carte sbagliate, correggi i campi Hero/Board/Street e
+# premi "Conferma carte": salva un record in vision_feedback/feedback.jsonl
+# con rilevazione grezza + correzione umana.
 # Se la lettura non è affidabile, copia immagine+JSON in vision_failures/
 # per usarli come esempi da annotare/fine-tunare.
 # "Sempre sopra" decide se l'overlay resta davanti; "Click-through" lascia

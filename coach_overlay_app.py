@@ -222,6 +222,58 @@ def capture_metadata(
     }
 
 
+def vision_feedback_record(
+    spot: OverlaySpot,
+    region: CaptureRegion,
+    vision: dict[str, object] | None,
+    advice: dict[str, object] | None = None,
+    readout: str = "",
+) -> dict[str, object]:
+    vision = dict(vision or {})
+    corrected_hero = (spot.hero_cards or "").replace(",", " ").split()
+    corrected_board = (spot.board_cards or "").replace(",", " ").split()
+    detected_hero = list(vision.get("hero_cards", []) or [])
+    detected_board = list(vision.get("board_cards", []) or [])
+    return {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "image": vision.get("image", ""),
+        "annotated_image": vision.get("annotated_image", ""),
+        "failure_image": vision.get("failure_image", ""),
+        "readout": readout,
+        "region": region_to_config(region),
+        "detected": {
+            "hero_cards": detected_hero,
+            "board_cards": detected_board,
+            "street": vision.get("street", ""),
+            "confidence": vision.get("confidence", 0.0),
+            "actionable": bool(vision.get("actionable", False)),
+        },
+        "corrected": {
+            "hero_cards": corrected_hero,
+            "board_cards": corrected_board,
+            "street": spot.street,
+            "position": spot.position,
+            "pot_bb": spot.pot_bb,
+            "to_call_bb": spot.to_call_bb,
+            "stack_bb": spot.stack_bb,
+            "opponents": spot.opponents,
+        },
+        "match": {
+            "hero": detected_hero == corrected_hero,
+            "board": detected_board == corrected_board,
+            "street": vision.get("street", "") == spot.street,
+        },
+        "raw_vision": vision,
+        "advice": advice or {},
+    }
+
+
+def append_jsonl(path: Path, record: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
 def _parse_card_text(text: str):
     cards = []
     for raw in (text or "").replace(",", " ").split():
@@ -716,6 +768,7 @@ def run_app():
             read_table = QPushButton("Leggi tavolo")
             hero_zone_btn = QPushButton("Area Hero")
             board_zone_btn = QPushButton("Area Board")
+            confirm_cards = QPushButton("Conferma carte")
             open_debug = QPushButton("Apri debug")
             simple_area = QPushButton("Solo area")
             diagnose = QPushButton("Diagnostica")
@@ -728,6 +781,7 @@ def run_app():
             self.read_table_btn = read_table
             self.hero_zone_btn = hero_zone_btn
             self.board_zone_btn = board_zone_btn
+            self.confirm_cards_btn = confirm_cards
             self.open_debug_btn = open_debug
             self.simple_area_btn = simple_area
             self.diagnose_btn = diagnose
@@ -764,6 +818,7 @@ def run_app():
             read_table.clicked.connect(self.read_table_from_area)
             hero_zone_btn.clicked.connect(lambda: self.start_zone_picker("hero"))
             board_zone_btn.clicked.connect(lambda: self.start_zone_picker("board"))
+            confirm_cards.clicked.connect(self.confirm_vision_cards)
             open_debug.clicked.connect(self.open_latest_debug)
             simple_area.clicked.connect(self.toggle_simple_area_mode)
             diagnose.clicked.connect(self.run_permission_diagnostics)
@@ -781,6 +836,7 @@ def run_app():
             capture_buttons.addWidget(read_table)
             capture_buttons.addWidget(hero_zone_btn)
             capture_buttons.addWidget(board_zone_btn)
+            capture_buttons.addWidget(confirm_cards)
             capture_buttons.addWidget(open_debug)
             capture_buttons.addWidget(simple_area)
             capture_buttons.addWidget(diagnose)
@@ -923,6 +979,27 @@ def run_app():
                 return
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
             self.capture_status.setText(f"Aperto debug: {path.name}")
+
+        def confirm_vision_cards(self):
+            if not self.last_vision_state:
+                self.capture_status.setText("Nessuna lettura vision da confermare: premi Leggi prima.")
+                return
+            try:
+                self.calculate()
+                record = vision_feedback_record(
+                    self.spot(),
+                    self.active_region(),
+                    self.last_vision_state,
+                    self.last_payload,
+                    self.estimated.text(),
+                )
+                path = self.capture_session / "vision_feedback" / "feedback.jsonl"
+                append_jsonl(path, record)
+                match = record["match"]
+                status = "OK" if match["hero"] and match["board"] and match["street"] else "correzione salvata"
+                self.capture_status.setText(f"Feedback carte salvato ({status}): {path}")
+            except Exception as exc:
+                self.capture_status.setText(f"Feedback carte fallito: {exc}")
 
         def calculate(self):
             self.recalc_timer.stop()

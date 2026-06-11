@@ -363,8 +363,10 @@ def test_overlay_capture_metadata_is_json_ready(tmp_path):
     from coach_overlay_app import (
         CaptureRegion,
         OverlaySpot,
+        append_jsonl,
         capture_metadata,
         create_capture_session,
+        vision_feedback_record,
     )
 
     session = create_capture_session(tmp_path)
@@ -383,6 +385,26 @@ def test_overlay_capture_metadata_is_json_ready(tmp_path):
     assert record["region"]["width"] == 300
     assert record["spot"]["hero_cards"] == "As Kh"
     assert record["vision"]["hero_cards"] == ["As", "Kh"]
+    feedback = vision_feedback_record(
+        OverlaySpot(hero_cards="As Kh", board_cards="Qh 7c 2h", street="flop"),
+        CaptureRegion(x=10, y=20, width=300, height=200, source="manual"),
+        {
+            "image": "vision_latest.png",
+            "annotated_image": "annotated_latest.png",
+            "hero_cards": ["As", "Qh"],
+            "board_cards": ["Qh", "7c", "2h"],
+            "street": "flop",
+            "confidence": 0.42,
+        },
+        {"label": "CALL"},
+        "readout",
+    )
+    assert feedback["match"]["hero"] is False
+    assert feedback["match"]["board"] is True
+    assert feedback["corrected"]["hero_cards"] == ["As", "Kh"]
+    feedback_path = tmp_path / "feedback.jsonl"
+    append_jsonl(feedback_path, feedback)
+    assert feedback_path.read_text(encoding="utf-8").count("\n") == 1
 
 
 def test_overlay_capture_session_falls_back_when_root_unusable(tmp_path):
